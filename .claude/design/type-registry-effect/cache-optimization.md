@@ -1,6 +1,6 @@
 ---
 status: stub
-module: effect-type-registry
+module: type-registry-effect
 category: performance
 created: 2026-01-17
 updated: 2026-01-18

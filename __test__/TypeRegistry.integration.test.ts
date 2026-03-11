@@ -12,8 +12,8 @@
 import * as os from "node:os";
 import * as Path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { TypeRegistry } from "./TypeRegistry.js";
-import type { PackageSpec } from "./types.js";
+import { TypeRegistry } from "../src/TypeRegistry.js";
+import type { PackageSpec } from "../src/types.js";
 
 /**
  * Get persistent test cache directory

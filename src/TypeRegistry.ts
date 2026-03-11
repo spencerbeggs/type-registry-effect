@@ -140,7 +140,7 @@ export class TypeRegistry {
 			const metadata: CacheMetadata = {
 				cachedAt: Date.now(),
 				version: pkg.version,
-				ttl: this.options.ttl,
+				...(this.options.ttl !== undefined ? { ttl: this.options.ttl } : {}),
 			};
 			yield* cache.writeMetadata(pkg, metadata);
 
@@ -213,7 +213,7 @@ export class TypeRegistry {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: this.options.ttl,
+					...(this.options.ttl !== undefined ? { ttl: this.options.ttl } : {}),
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 			} else if (!exists && !autoFetch) {

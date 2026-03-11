@@ -9,11 +9,11 @@ import type { FileSystem, HttpClient } from "@effect/platform";
 import { NodeFileSystem } from "@effect/platform-node";
 import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MockPackageFetcherLive } from "../__test__/utils/mockPackageFetcher.js";
-import { CacheService, makeCacheServiceLayer } from "./services/CacheService.js";
-import { PackageFetcher } from "./services/PackageFetcher.js";
-import { TypeResolver, TypeResolverLive } from "./services/TypeResolver.js";
-import type { CacheMetadata, PackageJson, PackageSpec, VirtualFileSystem } from "./types.js";
+import { CacheService, makeCacheServiceLayer } from "../src/services/CacheService.js";
+import { PackageFetcher } from "../src/services/PackageFetcher.js";
+import { TypeResolver, TypeResolverLive } from "../src/services/TypeResolver.js";
+import type { CacheMetadata, PackageJson, PackageSpec, VirtualFileSystem } from "../src/types.js";
+import { MockPackageFetcherLive } from "./utils/mockPackageFetcher.js";
 
 /**
  * Helper to run Effect programs with mocked services
@@ -84,7 +84,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: undefined,
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 
@@ -153,7 +152,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: undefined,
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 
@@ -201,7 +199,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 					const metadata: CacheMetadata = {
 						cachedAt: Date.now(),
 						version: pkg.version,
-						ttl: undefined,
 					};
 					yield* cache.writeMetadata(pkg, metadata);
 
@@ -250,7 +247,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: undefined,
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 
@@ -281,7 +277,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: undefined,
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 
@@ -317,7 +312,6 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const metadata: CacheMetadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-					ttl: undefined,
 				};
 				yield* cache.writeMetadata(pkg, metadata);
 

@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { normalizeModuleName } from "./PackageFetcher.js";
+import { normalizeModuleName } from "../src/services/PackageFetcher.js";
 
 describe("PackageFetcher", () => {
 	describe("normalizeModuleName", () => {

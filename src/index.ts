@@ -13,7 +13,6 @@ export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 export * from "./events.js";
 export * from "./services/CacheService.js";
 export * from "./services/TypeResolver.js";
-export * from "./services/TypeResolver.js";
 export * from "./TypeRegistry.js";
 export * from "./types.js";
 export * from "./utils/xdg.js";

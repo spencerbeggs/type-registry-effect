@@ -1,9 +1,9 @@
 {
 	"version": "1.0.0",
 	"project": {
-		"name": "spencerbeggs/website",
-		"type": "monorepo",
-		"repository": "https://github.com/spencerbeggs/website",
+		"name": "spencerbeggs/type-registry-effect",
+		"type": "library",
+		"repository": "https://github.com/spencerbeggs/type-registry-effect",
 		"maintainer": "C. Spencer Beggs"
 	},
 	"paths": {
@@ -14,54 +14,14 @@
 		"localContext": "CLAUDE.local.md"
 	},
 	"modules": {
-		"effect-type-registry": {
-			"path": "pkgs/effect-type-registry",
-			"designDocsPath": ".claude/design/effect-type-registry",
+		"type-registry-effect": {
+			"path": ".",
+			"designDocsPath": ".claude/design/type-registry-effect",
 			"categories": ["architecture", "observability", "performance"],
 			"maintainer": "Spencer Beggs",
 			"userDocs": {
-				"readme": "pkgs/effect-type-registry/README.md",
-				"repoDocs": "pkgs/effect-type-registry/docs",
-				"siteDocs": "website/docs/en/packages/effect-type-registry"
-			}
-		},
-		"rspress-plugin-api-extractor": {
-			"path": "pkgs/rspress-plugin-api-extractor",
-			"designDocsPath": ".claude/design/rspress-plugin-api-extractor",
-			"categories": [
-				"architecture",
-				"performance",
-				"observability",
-				"cross-linking",
-				"import-generation",
-				"source-mapping"
-			],
-			"maintainer": "Spencer Beggs",
-			"userDocs": {
-				"readme": "pkgs/rspress-plugin-api-extractor/README.md",
-				"repoDocs": null,
-				"siteDocs": "website/docs/en/packages/rspress-plugin-api-extractor"
-			}
-		},
-		"website": {
-			"path": "website",
-			"designDocsPath": null,
-			"categories": [],
-			"maintainer": "Spencer Beggs",
-			"userDocs": {
 				"readme": "README.md",
-				"repoDocs": "website/docs/en",
-				"siteDocs": "website/docs/en"
-			}
-		},
-		"design-doc-system": {
-			"path": ".",
-			"designDocsPath": ".claude/design/design-doc-system",
-			"categories": ["meta", "documentation", "architecture"],
-			"maintainer": "Spencer Beggs",
-			"userDocs": {
-				"readme": null,
-				"repoDocs": null,
+				"repoDocs": "docs",
 				"siteDocs": null
 			}
 		}
@@ -188,24 +148,6 @@
 			],
 			"tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
 			"file": ".claude/agents/design-doc-agent.md"
-		},
-		"rspress-doc-agent": {
-			"enabled": true,
-			"description": "Write and maintain RSPress 2.0 documentation sites",
-			"skills": [
-				"rspress-page",
-				"rspress-nav",
-				"rspress-frontmatter",
-				"rspress-components",
-				"rspress-api-docs",
-				"rspress-examples",
-				"rspress-guide",
-				"rspress-navigation",
-				"rspress-review",
-				"rspress-sync"
-			],
-			"tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
-			"file": ".claude/agents/rspress-doc-agent.md"
 		},
 		"docs-gen-agent": {
 			"enabled": true,

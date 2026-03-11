@@ -36,7 +36,7 @@ function getFixturePath(packageName: string): string {
 	// Get the current file's directory using import.meta.url
 	const currentFileUrl = new URL(import.meta.url);
 	const currentDir = Path.dirname(currentFileUrl.pathname);
-	const fixturesDir = Path.join(currentDir, "..", "__fixtures__");
+	const fixturesDir = Path.join(currentDir, "..", "fixtures");
 	return Path.join(fixturesDir, packageName);
 }
 
