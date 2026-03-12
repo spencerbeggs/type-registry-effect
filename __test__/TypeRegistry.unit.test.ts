@@ -172,10 +172,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				}
 
 				// Write metadata
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Verify it exists
@@ -198,11 +198,11 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
 				yield* cache.write(pkg, "package.json", JSON.stringify(packageJson, null, 2));
 
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
 					ttl,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Check if cached
@@ -240,10 +240,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 					}
 				}
 
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Get VFS
@@ -287,10 +287,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 						}
 					}
 
-					const metadata = new CacheMetadata({
+					const metadata = {
 						cachedAt: Date.now(),
 						version: pkg.version,
-					});
+					};
 					yield* cache.writeMetadata(pkg, metadata);
 
 					// Get VFS for this package
@@ -335,10 +335,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 					}
 				}
 
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Get VFS
@@ -365,10 +365,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
 				yield* cache.write(pkg, "package.json", JSON.stringify(packageJson, null, 2));
 
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Resolve import
@@ -400,10 +400,10 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 				const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
 				yield* cache.write(pkg, "package.json", JSON.stringify(packageJson, null, 2));
 
-				const metadata = new CacheMetadata({
+				const metadata = {
 					cachedAt: Date.now(),
 					version: pkg.version,
-				});
+				};
 				yield* cache.writeMetadata(pkg, metadata);
 
 				// Get type entries

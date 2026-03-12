@@ -5,7 +5,6 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeNodeCacheLayer } from "../../src/layers/CacheServiceLive.js";
-import { CacheMetadata } from "../../src/schemas/CacheMetadata.js";
 import { PackageSpec } from "../../src/schemas/PackageSpec.js";
 import { CacheService } from "../../src/services/CacheService.js";
 
@@ -51,7 +50,7 @@ describe("CacheServiceLive", () => {
 
 	it("should write and read metadata", async () => {
 		const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
-		const meta = new CacheMetadata({ version: "3.22.4", cachedAt: Date.now() });
+		const meta = { version: "3.22.4", cachedAt: Date.now() };
 		const result = await run(
 			Effect.gen(function* () {
 				const cache = yield* CacheService;
@@ -59,13 +58,12 @@ describe("CacheServiceLive", () => {
 				return yield* cache.readMetadata(pkg);
 			}),
 		);
-		expect(result).toBeInstanceOf(CacheMetadata);
-		expect(result.version).toBe("3.22.4");
+		expect(result).toHaveProperty("version", "3.22.4");
 	});
 
 	it("should generate VFS with node_modules prefix", async () => {
 		const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
-		const meta = new CacheMetadata({ version: "3.22.4", cachedAt: Date.now() });
+		const meta = { version: "3.22.4", cachedAt: Date.now() };
 		const result = await run(
 			Effect.gen(function* () {
 				const cache = yield* CacheService;
@@ -81,7 +79,7 @@ describe("CacheServiceLive", () => {
 
 	it("should remove a cached package", async () => {
 		const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
-		const meta = new CacheMetadata({ version: "3.22.4", cachedAt: Date.now() });
+		const meta = { version: "3.22.4", cachedAt: Date.now() };
 		const result = await run(
 			Effect.gen(function* () {
 				const cache = yield* CacheService;

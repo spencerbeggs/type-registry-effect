@@ -135,11 +135,11 @@ describe("CacheService", () => {
 		it("should write and read metadata", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const metadata = new CacheMetadata({
+				const metadata = {
 					version: "0.73.0",
 					cachedAt: Date.now(),
 					ttl: 7 * 24 * 60 * 60 * 1000,
-				});
+				};
 
 				// Write metadata
 				yield* cache.writeMetadata(testPkg, metadata);
@@ -157,10 +157,10 @@ describe("CacheService", () => {
 		it("should store metadata as JSON", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const metadata = new CacheMetadata({
+				const metadata = {
 					version: "1.0.0",
 					cachedAt: 1234567890,
-				});
+				};
 
 				yield* cache.writeMetadata(testPkg, metadata);
 

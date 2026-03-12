@@ -13,6 +13,36 @@ const pkgDir = (baseDir: string, pkg: PackageSpec): string => Path.join(baseDir,
 const mapToCacheError = (operation: "read" | "write" | "delete" | "list", path: string) => (error: unknown) =>
 	new CacheError({ operation, path, message: String(error) });
 
+/**
+ * Creates a {@link CacheService} layer backed by the local filesystem.
+ *
+ * @param baseDir - Optional custom cache directory. When omitted the XDG
+ *   cache directory is used (see {@link getDefaultCacheDir}).
+ * @returns A `Layer` providing {@link CacheService} that requires
+ *   {@link @effect/platform#FileSystem | FileSystem}.
+ *
+ * @example
+ * ```typescript
+ * import { NodeFileSystem } from "@effect/platform-node";
+ * import { Effect, Layer } from "effect";
+ * import { CacheService, makeNodeCacheLayer } from "type-registry-effect";
+ *
+ * const CustomCache = makeNodeCacheLayer("/tmp/my-type-cache");
+ * const MainLayer = Layer.provide(CustomCache, NodeFileSystem.layer);
+ *
+ * const program = Effect.gen(function* () {
+ *   const cache = yield* CacheService;
+ *   console.log("using custom cache dir");
+ * });
+ *
+ * Effect.runPromise(Effect.provide(program, MainLayer));
+ * ```
+ *
+ * @see {@link CacheService}
+ * @see {@link getDefaultCacheDir}
+ *
+ * @public
+ */
 export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, never, FileSystem.FileSystem> =>
 	Layer.effect(
 		CacheService,
@@ -128,4 +158,16 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 		}),
 	);
 
+/**
+ * Default {@link CacheService} layer using the XDG cache directory.
+ *
+ * @remarks
+ * This is equivalent to calling {@link makeNodeCacheLayer} with no arguments.
+ * Requires a {@link @effect/platform#FileSystem | FileSystem} layer to be
+ * provided at composition time.
+ *
+ * @see {@link makeNodeCacheLayer}
+ *
+ * @public
+ */
 export const CacheServiceLive: Layer.Layer<CacheService, never, FileSystem.FileSystem> = makeNodeCacheLayer();

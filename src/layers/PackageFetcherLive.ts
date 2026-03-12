@@ -12,6 +12,20 @@ const retrySchedule = Schedule.exponential(Duration.millis(100)).pipe(Schedule.c
 
 const defaultTimeout = Duration.seconds(30);
 
+/**
+ * Live {@link PackageFetcher} layer that fetches package metadata and type
+ * definitions from the jsDelivr CDN.
+ *
+ * @remarks
+ * All HTTP requests are retried up to **3 times** with exponential back-off
+ * (starting at 100 ms) and time out after **30 seconds**. Requires an
+ * {@link @effect/platform#HttpClient | HttpClient} layer to be provided at
+ * composition time.
+ *
+ * @see {@link PackageFetcher}
+ *
+ * @public
+ */
 export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.HttpClient> = Layer.effect(
 	PackageFetcher,
 	Effect.gen(function* () {

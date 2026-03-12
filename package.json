@@ -19,7 +19,8 @@
 	},
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts"
+		".": "./src/index.ts",
+		"./node": "./src/node.ts"
 	},
 	"scripts": {
 		"build": "turbo run build:dev build:prod --log-order=grouped",

@@ -72,6 +72,23 @@ function extractTypesFromExport(exportValue: string | Record<string, unknown> | 
 
 // ── Layer ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Pure {@link TypeResolver} layer with no external dependencies.
+ *
+ * @remarks
+ * Resolution is performed synchronously using only the data present in the
+ * supplied `package.json`. The resolution order is:
+ *
+ * 1. `exports` map (`"types"` condition, then `"import"` / `"default"`)
+ * 2. `typesVersions["*"]` with wildcard pattern matching
+ * 3. Top-level `types` or `typings` fields
+ * 4. Conventional extension swapping (`.js` to `.d.ts`) and `index.d.ts`
+ *    fallback
+ *
+ * @see {@link TypeResolver}
+ *
+ * @public
+ */
 export const TypeResolverLive: Layer.Layer<TypeResolver> = Layer.succeed(TypeResolver, {
 	resolveImport: (specifier, packageJson, pkg) =>
 		Effect.sync(() => {

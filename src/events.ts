@@ -1,6 +1,12 @@
 /**
  * Structured log events emitted by TypeRegistry operations.
- * Uses Effect Schema for runtime validation and type safety.
+ *
+ * @remarks
+ * Uses {@link https://effect.website/docs/schema | Effect Schema} for runtime
+ * validation and type safety. Every event conforms to the {@link LogEventSchema}
+ * discriminated union and can be narrowed by its `event` field.
+ *
+ * @packageDocumentation
  */
 
 import * as Schema from "effect/Schema";
@@ -10,19 +16,43 @@ import * as Schema from "effect/Schema";
 // ============================================================================
 
 /**
- * Discriminated union of all log events.
- * Use the `event` field to narrow the type.
+ * Discriminated union schema for all structured log events emitted by
+ * TypeRegistry operations.
+ *
+ * @remarks
+ * The following event types are defined:
+ *
+ * - `"package.version.resolved"` — a version reference was resolved to a pinned version.
+ * - `"cache.hit"` — a package was found in the disk cache and is fresh.
+ * - `"cache.stale"` — a cached package exceeded its TTL.
+ * - `"cache.miss"` — a package was not found in the cache.
+ * - `"package.fetch.start"` — a network fetch has begun for a package.
+ * - `"package.loaded"` — a package was successfully loaded (from cache or network).
+ * - `"package.load.failed"` — loading a package failed.
+ * - `"packages.batch.start"` — a batch operation started for multiple packages.
+ * - `"packages.batch.complete"` — a batch operation finished with summary statistics.
+ * - `"typescript.cache.created"` — a TypeScript in-memory cache was created from VFS data.
+ *
+ * Use the `event` field on the decoded value to narrow the type in a
+ * `switch`/`case` or `if` block.
+ *
+ * @see {@link LogEvent} for the inferred TypeScript type
+ * @see {@link LogEventHandler} for the callback signature
  *
  * @example
  * ```typescript
+ * import type { LogEventHandler } from "type-registry-effect";
+ *
  * const handler: LogEventHandler = (event) => {
  *   if (event.event === "package.loaded") {
  *     console.log(`Loaded ${event.data.package}@${event.data.version}`);
  *   }
  * };
  * ```
+ *
+ * @public
  */
-export class LogEventSchema extends Schema.Union(
+export const LogEventSchema = Schema.Union(
 	// Package version resolved
 	Schema.Struct({
 		event: Schema.Literal("package.version.resolved"),
@@ -154,17 +184,57 @@ export class LogEventSchema extends Schema.Union(
 			rootFiles: Schema.Number,
 		}),
 	}),
-) {}
+);
 
 /**
- * Type-safe log event extracted from schema.
- * This is a discriminated union - use the `event` field for type narrowing.
+ * Type-safe log event inferred from {@link LogEventSchema}.
+ *
+ * @remarks
+ * This is a discriminated union — narrow it using the `event` string literal
+ * field. Each variant carries a strongly-typed `data` payload.
+ *
+ * @example
+ * ```typescript
+ * import type { LogEvent } from "type-registry-effect";
+ *
+ * function handleEvent(event: LogEvent): void {
+ *   switch (event.event) {
+ *     case "cache.hit":
+ *       console.log(`Cache hit for ${event.data.package}@${event.data.version}`);
+ *       break;
+ *     case "cache.miss":
+ *       console.log(`Cache miss for ${event.data.package}@${event.data.version}`);
+ *       break;
+ *     case "package.loaded":
+ *       console.log(`Loaded ${event.data.files} files from ${event.data.source}`);
+ *       break;
+ *     case "packages.batch.complete":
+ *       console.log(`Batch done: ${event.data.loaded}/${event.data.total} in ${event.data.durationMs}ms`);
+ *       break;
+ *     default:
+ *       console.log(`[${event.level}] ${event.message}`);
+ *   }
+ * }
+ * ```
+ *
+ * @see {@link LogEventSchema} for the runtime schema definition
+ *
+ * @public
  */
 export type LogEvent = Schema.Schema.Type<typeof LogEventSchema>;
 
 /**
- * Handler function for log events.
- * Receives validated events from TypeRegistry operations.
+ * Callback function type for receiving validated {@link LogEvent} instances.
+ *
+ * @remarks
+ * Pass an implementation of this type to logging integrations that subscribe
+ * to TypeRegistry operations. The handler is invoked synchronously with each
+ * event after it has been validated against the {@link LogEventSchema}.
+ *
+ * @see {@link LogEvent} for the event payload type
+ * @see {@link LogEventSchema} for the runtime schema
+ *
+ * @public
  */
 export type LogEventHandler = (event: LogEvent) => void;
 
@@ -173,8 +243,17 @@ export type LogEventHandler = (event: LogEvent) => void;
 // ============================================================================
 
 /**
- * Create a validated log event.
- * This function validates the event at runtime using the schema.
+ * Create a validated {@link LogEvent} from unknown data.
+ *
+ * @remarks
+ * Decodes `event` synchronously through {@link LogEventSchema}. Throws a
+ * parse error if the input does not conform to any variant of the schema.
+ * This is intended for internal use within the library's logging
+ * infrastructure.
+ *
+ * @param event - Raw, unvalidated event data.
+ * @returns A fully validated {@link LogEvent}.
+ * @throws `ParseError` when `event` does not match {@link LogEventSchema}.
  *
  * @internal
  */
