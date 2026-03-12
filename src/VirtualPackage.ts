@@ -23,7 +23,7 @@ export class VirtualPackage {
 	constructor(
 		readonly name: string,
 		readonly version: string,
-		protected readonly entries: Map<string, string>,
+		private readonly entries: Map<string, string>,
 	) {}
 
 	/**

@@ -90,14 +90,22 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 					Effect.flatMap((data) =>
 						Schema.decodeUnknown(ResolveResponseSchema)(data).pipe(
 							Effect.mapError(
-								(e) => new NetworkError({ url: `resolve/${name}@${ref}`, message: `Invalid response: ${String(e)}` }),
+								(e) =>
+									new ParseError({
+										source: `resolve/${name}@${ref}`,
+										message: `Invalid response: ${String(e)}`,
+									}),
 							),
 						),
 					),
 					Effect.map((data) => data.version),
-					Effect.catchTag("NetworkError", (e) =>
-						Effect.fail(new PackageNotFoundError({ name, version: ref, message: e.message })),
-					),
+					Effect.catchTags({
+						ParseError: (e) => Effect.fail(new PackageNotFoundError({ name, version: ref, message: e.message })),
+						NetworkError: (e) =>
+							e.message.includes("404")
+								? Effect.fail(new PackageNotFoundError({ name, version: ref, message: e.message }))
+								: Effect.fail(e),
+					}),
 				),
 
 			getFileTree,
