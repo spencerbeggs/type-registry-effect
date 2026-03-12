@@ -6,8 +6,14 @@ import { ParseError } from "../errors/ParseError.js";
 import { FileTreeResponse } from "../schemas/FileTree.js";
 import { PackageJson } from "../schemas/PackageJson.js";
 import type { PackageSpec } from "../schemas/PackageSpec.js";
-import type { PackageMetadata } from "../services/PackageFetcher.js";
 import { JSDELIVR_CDN, JSDELIVR_DATA_API, PackageFetcher, TYPE_FILE_PATTERN } from "../services/PackageFetcher.js";
+
+const PackageMetadataSchema = Schema.Struct({
+	versions: Schema.mutable(Schema.Array(Schema.String)),
+	tags: Schema.mutable(Schema.Record({ key: Schema.String, value: Schema.String })),
+});
+
+const ResolveResponseSchema = Schema.Struct({ version: Schema.String });
 
 const retrySchedule = Schedule.exponential(Duration.millis(100)).pipe(Schedule.compose(Schedule.recurs(3)));
 
@@ -65,11 +71,30 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 
 		return {
 			getVersions: (name) =>
-				fetchJson(`${JSDELIVR_DATA_API}/package/npm/${name}`).pipe(Effect.map((data) => data as PackageMetadata)),
+				fetchJson(`${JSDELIVR_DATA_API}/package/npm/${name}`).pipe(
+					Effect.flatMap((data) =>
+						Schema.decodeUnknown(PackageMetadataSchema)(data).pipe(
+							Effect.mapError(
+								(e) =>
+									new ParseError({
+										source: `${name}/versions`,
+										message: `Schema validation failed: ${String(e)}`,
+									}),
+							),
+						),
+					),
+				),
 
 			resolveVersion: (name, ref) =>
 				fetchJson(`${JSDELIVR_DATA_API}/package/resolve/npm/${name}@${ref}`).pipe(
-					Effect.map((data) => (data as { version: string }).version),
+					Effect.flatMap((data) =>
+						Schema.decodeUnknown(ResolveResponseSchema)(data).pipe(
+							Effect.mapError(
+								(e) => new NetworkError({ url: `resolve/${name}@${ref}`, message: `Invalid response: ${String(e)}` }),
+							),
+						),
+					),
+					Effect.map((data) => data.version),
 					Effect.catchTag("NetworkError", (e) =>
 						Effect.fail(new PackageNotFoundError({ name, version: ref, message: e.message })),
 					),
@@ -112,13 +137,19 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 					const fileTree = yield* getFileTree(pkg);
 
 					const typeFiles = fileTree.files.filter((f) => TYPE_FILE_PATTERN.test(f.name));
-					const vfs = new Map<string, string>();
 
-					for (const file of typeFiles) {
-						const normalizedPath = file.name.startsWith("/") ? file.name : `/${file.name}`;
-						const content = yield* fetchText(`${JSDELIVR_CDN}/npm/${pkg.name}@${pkg.version}${normalizedPath}`);
-						vfs.set(file.name, content);
-					}
+					const entries = yield* Effect.forEach(
+						typeFiles,
+						(file) => {
+							const normalizedPath = file.name.startsWith("/") ? file.name : `/${file.name}`;
+							return fetchText(`${JSDELIVR_CDN}/npm/${pkg.name}@${pkg.version}${normalizedPath}`).pipe(
+								Effect.map((content) => [file.name, content] as const),
+							);
+						},
+						{ concurrency: 10 },
+					);
+
+					const vfs = new Map<string, string>(entries);
 
 					const hasPackageJson = fileTree.files.some((f) => f.name === "/package.json");
 					if (!hasPackageJson) {

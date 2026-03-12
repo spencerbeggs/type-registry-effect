@@ -13,6 +13,28 @@ function normalizePath(path: string): string {
 	return path.replace(/\\/g, "/");
 }
 
+function escapeRegex(str: string): string {
+	return str.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+}
+
+function substituteWildcard(
+	value: string | Record<string, unknown>,
+	captured: string,
+): string | Record<string, unknown> {
+	if (typeof value === "string") return value.replace(/\*/g, captured);
+	if (typeof value === "object" && value !== null) {
+		const result: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(value)) {
+			if (typeof v === "string") result[k] = v.replace(/\*/g, captured);
+			else if (typeof v === "object" && v !== null)
+				result[k] = substituteWildcard(v as Record<string, unknown>, captured);
+			else result[k] = v;
+		}
+		return result;
+	}
+	return value;
+}
+
 function tryExtensions(basePath: string): string[] {
 	return [
 		basePath,
@@ -45,12 +67,37 @@ function getExportValue(exports: PackageJson["exports"], subpath: string): strin
 		if (alt !== undefined) return alt as string | Record<string, unknown>;
 		for (const [pattern, val] of Object.entries(exportsObj)) {
 			if (pattern.includes("*")) {
-				const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
-				if (regex.test(subpath) || regex.test(withoutDot)) return val as string | Record<string, unknown>;
+				const escaped = escapeRegex(pattern).replace(/\*/g, "(.*)");
+				const regex = new RegExp(`^${escaped}$`);
+				const match = regex.exec(subpath) || regex.exec(withoutDot);
+				if (match) {
+					const captured = match[1] || "";
+					return substituteWildcard(val as string | Record<string, unknown>, captured);
+				}
 			}
 		}
 	}
 	return null;
+}
+
+function findMainTypePath(packageJson: PackageJson): string {
+	if (packageJson.types) return packageJson.types;
+	if (packageJson.typings) return packageJson.typings;
+	if (packageJson.exports) {
+		const rootExport = getExportValue(packageJson.exports, ".");
+		if (rootExport) {
+			const typesPath = extractTypesFromExport(rootExport);
+			if (typesPath) return typesPath;
+		}
+	}
+	if (packageJson.main) {
+		const mainWithoutExt = packageJson.main.replace(/\.(m?[jt]s|cjs)$/, "");
+		const candidates = tryExtensions(mainWithoutExt);
+		const found = candidates.find((c) => isTypeDefinition(c));
+		if (found) return found;
+		return packageJson.main;
+	}
+	return "index.d.ts";
 }
 
 function extractTypesFromExport(exportValue: string | Record<string, unknown> | null): string | null {
@@ -126,7 +173,8 @@ export const TypeResolverLive: Layer.Layer<TypeResolver> = Layer.succeed(TypeRes
 					}
 					for (const [pattern, paths] of Object.entries(versionMap)) {
 						if (pattern.includes("*")) {
-							const regex = new RegExp(`^${pattern.replace(/\*/g, ".*")}$`);
+							const escaped = escapeRegex(pattern).replace(/\*/g, "(.*)");
+							const regex = new RegExp(`^${escaped}$`);
 							if (regex.test(lookupPath)) {
 								const resolved = Array.isArray(paths) ? paths[0] : paths;
 								if (resolved) {
@@ -161,22 +209,7 @@ export const TypeResolverLive: Layer.Layer<TypeResolver> = Layer.succeed(TypeRes
 
 	resolveMainEntry: (packageJson, pkg) =>
 		Effect.sync(() => {
-			let mainPath: string | undefined;
-			if (packageJson.types) mainPath = packageJson.types;
-			else if (packageJson.typings) mainPath = packageJson.typings;
-			else if (packageJson.exports) {
-				const rootExport = getExportValue(packageJson.exports, ".");
-				if (rootExport) {
-					const typesPath = extractTypesFromExport(rootExport);
-					if (typesPath) mainPath = typesPath;
-				}
-			}
-			if (!mainPath && packageJson.main) {
-				const mainWithoutExt = packageJson.main.replace(/\.(m?[jt]s|cjs)$/, "");
-				const candidates = tryExtensions(mainWithoutExt);
-				mainPath = candidates.find((c) => isTypeDefinition(c)) || packageJson.main;
-			}
-			if (!mainPath) mainPath = "index.d.ts";
+			const mainPath = findMainTypePath(packageJson);
 			const normalizedPath = normalizePath(mainPath.replace(/^\.\//, ""));
 			return new ResolvedModule({
 				filePath: normalizedPath,
@@ -188,22 +221,7 @@ export const TypeResolverLive: Layer.Layer<TypeResolver> = Layer.succeed(TypeRes
 	resolveTypeEntries: (packageJson, pkg) =>
 		Effect.sync(() => {
 			const entries: ResolvedModule[] = [];
-			let mainPath: string | undefined;
-			if (packageJson.types) mainPath = packageJson.types;
-			else if (packageJson.typings) mainPath = packageJson.typings;
-			else if (packageJson.exports) {
-				const rootExport = getExportValue(packageJson.exports, ".");
-				if (rootExport) {
-					const typesPath = extractTypesFromExport(rootExport);
-					if (typesPath) mainPath = typesPath;
-				}
-			}
-			if (!mainPath && packageJson.main) {
-				const mainWithoutExt = packageJson.main.replace(/\.(m?[jt]s|cjs)$/, "");
-				const candidates = tryExtensions(mainWithoutExt);
-				mainPath = candidates.find((c) => isTypeDefinition(c)) || packageJson.main;
-			}
-			if (!mainPath) mainPath = "index.d.ts";
+			const mainPath = findMainTypePath(packageJson);
 
 			entries.push(
 				new ResolvedModule({

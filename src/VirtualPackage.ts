@@ -178,7 +178,7 @@ export class VirtualPackage {
 	 *
 	 * @internal
 	 */
-	protected generatePackageJson(): string {
+	private generatePackageJson(): string {
 		const isSingleEntry = this.entries.size <= 1;
 
 		interface PkgJson {

@@ -140,7 +140,7 @@ describe("TypeResolver", () => {
 				}),
 			);
 
-			expect(result.filePath).toBe("dist/*.d.ts");
+			expect(result.filePath).toBe("dist/helper.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
 		});
 
