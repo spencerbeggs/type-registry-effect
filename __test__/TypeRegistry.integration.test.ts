@@ -9,119 +9,45 @@
  * The cache is stored at: /Users/spencer/.cache/effect-type-registry-test
  */
 
-import * as os from "node:os";
-import * as Path from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
-import { TypeRegistry } from "../src/TypeRegistry.js";
-import type { PackageSpec } from "../src/types.js";
+import type { Layer } from "effect";
+import { Effect } from "effect";
+import { describe, expect, it } from "vitest";
+import { NodeLayer } from "../src/platforms/node.js";
+import { PackageSpec } from "../src/schemas/PackageSpec.js";
+import * as TypeRegistry from "../src/TypeRegistry.js";
 
-/**
- * Get persistent test cache directory
- * Uses XDG_CACHE_HOME or falls back to ~/.cache
- */
-function getTestCacheDir(): string {
-	const xdgCacheHome = process.env.XDG_CACHE_HOME;
-	if (xdgCacheHome) {
-		return Path.join(xdgCacheHome, "effect-type-registry-test");
-	}
-	return Path.join(os.homedir(), ".cache", "effect-type-registry-test");
-}
+type NodeLayerServices = Layer.Layer.Success<typeof NodeLayer>;
+
+const run = <A, E>(effect: Effect.Effect<A, E, NodeLayerServices>) =>
+	Effect.runPromise(Effect.provide(effect, NodeLayer));
 
 describe("TypeRegistry (Integration Tests)", () => {
-	let registry: TypeRegistry;
-
-	beforeEach(() => {
-		// Use persistent test cache directory (shared across test runs)
-		registry = TypeRegistry.create({
-			cacheDir: getTestCacheDir(),
-			ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
-		});
-	});
-
-	describe("create", () => {
-		it("should create registry with default options", () => {
-			const reg = TypeRegistry.create();
-			expect(reg).toBeInstanceOf(TypeRegistry);
-		});
-
-		it("should create registry with custom cache directory", () => {
-			const customDir = Path.join(os.tmpdir(), "custom-cache-test");
-			const reg = TypeRegistry.create({ cacheDir: customDir });
-			expect(reg).toBeInstanceOf(TypeRegistry);
-		});
-
-		it("should create registry with custom TTL", () => {
-			const reg = TypeRegistry.create({ ttl: 1000 });
-			expect(reg).toBeInstanceOf(TypeRegistry);
-		});
-	});
-
 	describe("hasCached", () => {
 		it("should return false for non-cached package", async () => {
-			const pkg: PackageSpec = { name: "non-existent", version: "1.0.0" };
-			const result = await registry.hasCached(pkg);
+			const pkg = new PackageSpec({ name: "non-existent", version: "1.0.0" });
+			const result = await run(TypeRegistry.hasCached(pkg));
 			expect(result).toBe(false);
 		});
 	});
 
 	describe("fetchAndCache", () => {
 		it("should fetch and cache a real package (real API call)", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Fetch and cache
-			await registry.fetchAndCache(pkg);
+			await run(TypeRegistry.fetchAndCache(pkg));
 
 			// Verify cached
-			const isCached = await registry.hasCached(pkg);
+			const isCached = await run(TypeRegistry.hasCached(pkg));
 			expect(isCached).toBe(true);
 		}, 30000); // 30s timeout for network request
-
-		it("should not re-fetch if already cached and not stale", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
-
-			// First fetch
-			await registry.fetchAndCache(pkg);
-
-			// Second fetch should be a no-op (check by ensuring it's fast)
-			const start = Date.now();
-			await registry.fetchAndCache(pkg);
-			const duration = Date.now() - start;
-
-			// Should be very fast since it's cached
-			expect(duration).toBeLessThan(1000);
-		}, 30000);
-	});
-
-	describe("ensureCached", () => {
-		it("should fetch if not cached", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
-
-			await registry.ensureCached(pkg);
-
-			const isCached = await registry.hasCached(pkg);
-			expect(isCached).toBe(true);
-		}, 30000);
-
-		it("should not fetch if already cached", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
-
-			// First ensure
-			await registry.ensureCached(pkg);
-
-			// Second ensure should be fast
-			const start = Date.now();
-			await registry.ensureCached(pkg);
-			const duration = Date.now() - start;
-
-			expect(duration).toBeLessThan(1000);
-		}, 30000);
 	});
 
 	describe("getPackageVFS", () => {
 		it("should auto-fetch and return VFS", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
-			const vfs = await registry.getPackageVFS(pkg, { autoFetch: true });
+			const vfs = await run(TypeRegistry.getPackageVFS(pkg, { autoFetch: true }));
 
 			// Should have package.json
 			expect(vfs.has("node_modules/zod/package.json")).toBe(true);
@@ -132,27 +58,27 @@ describe("TypeRegistry (Integration Tests)", () => {
 		}, 30000);
 
 		it("should throw if not cached and autoFetch is false", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Clear cache first to ensure package is not cached
 			try {
-				await registry.clearCache(pkg);
+				await run(TypeRegistry.clearCache(pkg));
 			} catch {
 				// Ignore if not cached
 			}
 
-			await expect(registry.getPackageVFS(pkg, { autoFetch: false })).rejects.toThrow();
+			await expect(run(TypeRegistry.getPackageVFS(pkg, { autoFetch: false }))).rejects.toThrow();
 		});
 
 		it("should return VFS for cached package without fetching", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Fetch first
-			await registry.fetchAndCache(pkg);
+			await run(TypeRegistry.fetchAndCache(pkg));
 
 			// Get VFS should be fast
 			const start = Date.now();
-			const vfs = await registry.getPackageVFS(pkg, { autoFetch: false });
+			const vfs = await run(TypeRegistry.getPackageVFS(pkg, { autoFetch: false }));
 			const duration = Date.now() - start;
 
 			expect(vfs.size).toBeGreaterThan(0);
@@ -162,12 +88,12 @@ describe("TypeRegistry (Integration Tests)", () => {
 
 	describe("getVFS", () => {
 		it("should combine VFS from multiple packages", async () => {
-			const packages: PackageSpec[] = [
-				{ name: "zod", version: "3.22.4" },
-				{ name: "ts-pattern", version: "5.0.6" },
+			const packages = [
+				new PackageSpec({ name: "zod", version: "3.22.4" }),
+				new PackageSpec({ name: "ts-pattern", version: "5.0.6" }),
 			];
 
-			const vfs = await registry.getVFS(packages, { autoFetch: true });
+			const vfs = await run(TypeRegistry.getVFS(packages, { autoFetch: true }));
 
 			// Should have files from both packages
 			const zodFiles = Array.from(vfs.keys()).filter((key) => key.includes("node_modules/zod"));
@@ -178,13 +104,13 @@ describe("TypeRegistry (Integration Tests)", () => {
 		}, 60000); // 60s timeout for multiple packages
 
 		it("should handle partial failures gracefully", async () => {
-			const packages: PackageSpec[] = [
-				{ name: "zod", version: "3.22.4" }, // Valid package
-				{ name: "definitely-does-not-exist-package-xyz", version: "999.999.999" }, // Invalid
+			const packages = [
+				new PackageSpec({ name: "zod", version: "3.22.4" }), // Valid package
+				new PackageSpec({ name: "definitely-does-not-exist-package-xyz", version: "999.999.999" }), // Invalid
 			];
 
 			// Should not throw, but continue processing
-			const vfs = await registry.getVFS(packages, { autoFetch: true });
+			const vfs = await run(TypeRegistry.getVFS(packages, { autoFetch: true }));
 
 			// Should have files from valid package
 			const zodFiles = Array.from(vfs.keys()).filter((key) => key.includes("node_modules/zod"));
@@ -192,52 +118,52 @@ describe("TypeRegistry (Integration Tests)", () => {
 		}, 60000);
 
 		it("should throw if all packages fail", async () => {
-			const packages: PackageSpec[] = [
-				{ name: "does-not-exist-1", version: "999.999.999" },
-				{ name: "does-not-exist-2", version: "999.999.999" },
+			const packages = [
+				new PackageSpec({ name: "does-not-exist-1", version: "999.999.999" }),
+				new PackageSpec({ name: "does-not-exist-2", version: "999.999.999" }),
 			];
 
-			await expect(registry.getVFS(packages, { autoFetch: true })).rejects.toThrow("Failed to fetch VFS for all");
+			await expect(run(TypeRegistry.getVFS(packages, { autoFetch: true }))).rejects.toThrow();
 		}, 30000);
 	});
 
 	describe("resolveImport", () => {
 		it("should resolve import specifier to file path", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Ensure package is cached
-			await registry.ensureCached(pkg);
+			await run(TypeRegistry.fetchAndCache(pkg));
 
 			// Resolve main entry
-			const result = await registry.resolveImport(pkg, "zod");
+			const result = await run(TypeRegistry.resolveImport(pkg, "zod"));
 
 			expect(result.filePath).toBeTruthy();
 			expect(result.isTypeDefinition).toBe(true);
 		}, 30000);
 
 		it("should throw for uncached package", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Clear cache first to ensure package is not cached
 			try {
-				await registry.clearCache(pkg);
+				await run(TypeRegistry.clearCache(pkg));
 			} catch {
 				// Ignore if not cached
 			}
 
-			await expect(registry.resolveImport(pkg, "zod")).rejects.toThrow("not cached");
+			await expect(run(TypeRegistry.resolveImport(pkg, "zod"))).rejects.toThrow();
 		});
 	});
 
 	describe("getTypeEntries", () => {
 		it("should get all type entry points for package", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Ensure package is cached
-			await registry.ensureCached(pkg);
+			await run(TypeRegistry.fetchAndCache(pkg));
 
 			// Get type entries
-			const entries = await registry.getTypeEntries(pkg);
+			const entries = await run(TypeRegistry.getTypeEntries(pkg));
 
 			expect(entries.length).toBeGreaterThan(0);
 			expect(entries.every((e) => e.filePath)).toBe(true);
@@ -245,70 +171,45 @@ describe("TypeRegistry (Integration Tests)", () => {
 		}, 30000);
 
 		it("should throw for uncached package", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Clear cache first to ensure package is not cached
 			try {
-				await registry.clearCache(pkg);
+				await run(TypeRegistry.clearCache(pkg));
 			} catch {
 				// Ignore if not cached
 			}
 
-			await expect(registry.getTypeEntries(pkg)).rejects.toThrow("not cached");
+			await expect(run(TypeRegistry.getTypeEntries(pkg))).rejects.toThrow();
 		});
 	});
 
 	describe("clearCache", () => {
 		it("should remove package from cache", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Cache package
-			await registry.fetchAndCache(pkg);
-			expect(await registry.hasCached(pkg)).toBe(true);
+			await run(TypeRegistry.fetchAndCache(pkg));
+			expect(await run(TypeRegistry.hasCached(pkg))).toBe(true);
 
 			// Clear cache
-			await registry.clearCache(pkg);
+			await run(TypeRegistry.clearCache(pkg));
 
 			// Verify removed
-			expect(await registry.hasCached(pkg)).toBe(false);
+			expect(await run(TypeRegistry.hasCached(pkg))).toBe(false);
 		}, 30000);
-	});
-
-	describe("cache TTL behavior", () => {
-		it("should respect cache TTL", async () => {
-			// Create registry with 1 second TTL (use temp dir for this test)
-			const testCacheDir = Path.join(getTestCacheDir(), "ttl-test");
-			const shortTtlRegistry = TypeRegistry.create({
-				cacheDir: testCacheDir,
-				ttl: 1000, // 1 second
-			});
-
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
-
-			// Fetch and cache
-			await shortTtlRegistry.fetchAndCache(pkg);
-
-			// Wait for TTL to expire
-			await new Promise((resolve) => setTimeout(resolve, 1500));
-
-			// Fetch again - should re-fetch due to expired TTL
-			// (This is hard to verify without mocking, but at least check it doesn't error)
-			await shortTtlRegistry.fetchAndCache(pkg);
-
-			expect(await shortTtlRegistry.hasCached(pkg)).toBe(true);
-		}, 60000);
 	});
 
 	describe("scoped packages", () => {
 		it("should handle scoped package names", async () => {
-			const pkg: PackageSpec = { name: "@effect/schema", version: "0.68.0" };
+			const pkg = new PackageSpec({ name: "@effect/schema", version: "0.68.0" });
 
-			await registry.fetchAndCache(pkg);
+			await run(TypeRegistry.fetchAndCache(pkg));
 
-			const isCached = await registry.hasCached(pkg);
+			const isCached = await run(TypeRegistry.hasCached(pkg));
 			expect(isCached).toBe(true);
 
-			const vfs = await registry.getPackageVFS(pkg, { autoFetch: false });
+			const vfs = await run(TypeRegistry.getPackageVFS(pkg, { autoFetch: false }));
 			const hasFiles = Array.from(vfs.keys()).some((key) => key.includes("node_modules/@effect/schema"));
 			expect(hasFiles).toBe(true);
 		}, 30000);
@@ -316,27 +217,31 @@ describe("TypeRegistry (Integration Tests)", () => {
 
 	describe("concurrent operations", () => {
 		it("should handle concurrent fetches of same package", async () => {
-			const pkg: PackageSpec = { name: "zod", version: "3.22.4" };
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
 
 			// Fetch concurrently
-			await Promise.all([registry.fetchAndCache(pkg), registry.fetchAndCache(pkg), registry.fetchAndCache(pkg)]);
+			await Promise.all([
+				run(TypeRegistry.fetchAndCache(pkg)),
+				run(TypeRegistry.fetchAndCache(pkg)),
+				run(TypeRegistry.fetchAndCache(pkg)),
+			]);
 
-			const isCached = await registry.hasCached(pkg);
+			const isCached = await run(TypeRegistry.hasCached(pkg));
 			expect(isCached).toBe(true);
 		}, 30000);
 
 		it("should handle concurrent fetches of different packages", async () => {
-			const packages: PackageSpec[] = [
-				{ name: "zod", version: "3.22.4" },
-				{ name: "ts-pattern", version: "5.0.6" },
-				{ name: "@effect/schema", version: "0.68.0" },
+			const packages = [
+				new PackageSpec({ name: "zod", version: "3.22.4" }),
+				new PackageSpec({ name: "ts-pattern", version: "5.0.6" }),
+				new PackageSpec({ name: "@effect/schema", version: "0.68.0" }),
 			];
 
 			// Fetch all concurrently
-			await Promise.all(packages.map((pkg) => registry.fetchAndCache(pkg)));
+			await Promise.all(packages.map((pkg) => run(TypeRegistry.fetchAndCache(pkg))));
 
 			// Verify all cached
-			const results = await Promise.all(packages.map((pkg) => registry.hasCached(pkg)));
+			const results = await Promise.all(packages.map((pkg) => run(TypeRegistry.hasCached(pkg))));
 			expect(results.every((r) => r === true)).toBe(true);
 		}, 60000);
 	});

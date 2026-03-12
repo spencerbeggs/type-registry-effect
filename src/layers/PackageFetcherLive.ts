@@ -68,7 +68,17 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 			getPackageJson: (pkg) =>
 				fetchText(`${JSDELIVR_CDN}/npm/${pkg.name}@${pkg.version}/package.json`).pipe(
 					Effect.flatMap((content) =>
-						Schema.decodeUnknown(PackageJson)(JSON.parse(content)).pipe(
+						Effect.try({
+							try: () => JSON.parse(content) as unknown,
+							catch: (e) =>
+								new ParseError({
+									source: `${pkg.name}@${pkg.version}/package.json`,
+									message: `JSON parse failed: ${String(e)}`,
+								}),
+						}),
+					),
+					Effect.flatMap((parsed) =>
+						Schema.decodeUnknown(PackageJson)(parsed).pipe(
 							Effect.mapError(
 								(e) =>
 									new ParseError({

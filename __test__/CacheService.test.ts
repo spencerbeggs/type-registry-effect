@@ -6,10 +6,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as Path from "node:path";
 import { NodeFileSystem } from "@effect/platform-node";
-import * as Effect from "effect/Effect";
+import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CacheService, makeCacheServiceLayer } from "../src/services/CacheService.js";
-import type { CacheMetadata, PackageSpec } from "../src/types.js";
+import { makeNodeCacheLayer } from "../src/layers/CacheServiceLive.js";
+import { CacheMetadata } from "../src/schemas/CacheMetadata.js";
+import { PackageSpec } from "../src/schemas/PackageSpec.js";
+import { CacheService } from "../src/services/CacheService.js";
 
 describe("CacheService", () => {
 	let tempDir: string;
@@ -18,10 +20,10 @@ describe("CacheService", () => {
 	beforeEach(() => {
 		// Create a temporary directory for each test
 		tempDir = mkdtempSync(Path.join(tmpdir(), "cache-test-"));
-		testPkg = {
+		testPkg = new PackageSpec({
 			name: "@effect/cli",
 			version: "0.73.0",
-		};
+		});
 	});
 
 	afterEach(() => {
@@ -33,31 +35,7 @@ describe("CacheService", () => {
 		}
 	});
 
-	describe("getCachePath", () => {
-		it("should return correct cache path for package", async () => {
-			const program = Effect.gen(function* () {
-				const cache = yield* CacheService;
-				const path = cache.getCachePath(testPkg);
-				expect(path).toBe(Path.join(tempDir, "@effect/cli@0.73.0"));
-			});
-
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
-		});
-
-		it("should return correct cache path for file", async () => {
-			const program = Effect.gen(function* () {
-				const cache = yield* CacheService;
-				const path = cache.getCachePath(testPkg, "package.json");
-				expect(path).toBe(Path.join(tempDir, "@effect/cli@0.73.0", "package.json"));
-			});
-
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
-		});
-	});
+	const makeLayer = () => makeNodeCacheLayer(tempDir).pipe(Layer.provide(NodeFileSystem.layer));
 
 	describe("exists", () => {
 		it("should return false for non-existent package", async () => {
@@ -67,9 +45,7 @@ describe("CacheService", () => {
 				expect(result).toBe(false);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 
 		it("should return true after writing files", async () => {
@@ -84,9 +60,7 @@ describe("CacheService", () => {
 				expect(result).toBe(true);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -104,9 +78,7 @@ describe("CacheService", () => {
 				expect(result).toBe(content);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 
 		it("should create nested directories automatically", async () => {
@@ -121,9 +93,7 @@ describe("CacheService", () => {
 				expect(result).toBe("content");
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -140,31 +110,24 @@ describe("CacheService", () => {
 				// List files
 				const files = yield* cache.listFiles(testPkg);
 
-				// Sort for consistent comparison
-				files.sort();
-				expect(files).toEqual(["index.d.ts", "package.json", "types/helpers.d.ts"].sort());
+				// Sort for consistent comparison (files is ReadonlyArray)
+				expect([...files].sort()).toEqual(["index.d.ts", "package.json", "types/helpers.d.ts"].sort());
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 
-		it("should return empty array for non-existent package", async () => {
+		it("should fail with CacheError for non-existent package", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const result = yield* cache.listFiles(testPkg);
-				expect(result).toEqual([]);
+				const result = yield* cache.listFiles(testPkg).pipe(
+					Effect.map(() => "success" as const),
+					Effect.catchTag("CacheError", () => Effect.succeed("cache-error" as const)),
+				);
+				expect(result).toBe("cache-error");
 			});
 
-			// Use catchAll to handle the error gracefully
-			await Effect.runPromise(
-				program.pipe(
-					Effect.catchAll(() => Effect.succeed(undefined)),
-					Effect.provide(makeCacheServiceLayer(tempDir)),
-					Effect.provide(NodeFileSystem.layer),
-				),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -172,44 +135,43 @@ describe("CacheService", () => {
 		it("should write and read metadata", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const metadata: CacheMetadata = {
+				const metadata = new CacheMetadata({
 					version: "0.73.0",
 					cachedAt: Date.now(),
 					ttl: 7 * 24 * 60 * 60 * 1000,
-				};
+				});
 
 				// Write metadata
 				yield* cache.writeMetadata(testPkg, metadata);
 
 				// Read metadata
 				const result = yield* cache.readMetadata(testPkg);
-				expect(result).toEqual(metadata);
+				expect(result.version).toBe(metadata.version);
+				expect(result.cachedAt).toBe(metadata.cachedAt);
+				expect(result.ttl).toBe(metadata.ttl);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 
 		it("should store metadata as JSON", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const metadata: CacheMetadata = {
+				const metadata = new CacheMetadata({
 					version: "1.0.0",
 					cachedAt: 1234567890,
-				};
+				});
 
 				yield* cache.writeMetadata(testPkg, metadata);
 
 				// Read raw file to verify JSON format
 				const rawContent = yield* cache.read(testPkg, ".metadata.json");
 				const parsed = JSON.parse(rawContent);
-				expect(parsed).toEqual(metadata);
+				expect(parsed.version).toBe("1.0.0");
+				expect(parsed.cachedAt).toBe(1234567890);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -232,9 +194,7 @@ describe("CacheService", () => {
 				expect(vfs.has("node_modules/@effect/cli/.metadata.json")).toBe(false); // Should skip metadata
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 
 		it("should include file contents in VFS", async () => {
@@ -248,9 +208,7 @@ describe("CacheService", () => {
 				expect(vfs.get("node_modules/@effect/cli/test.d.ts")).toBe(content);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -275,9 +233,7 @@ describe("CacheService", () => {
 				expect(existsAfter).toBe(false);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 
@@ -285,8 +241,8 @@ describe("CacheService", () => {
 		it("should handle multiple packages independently", async () => {
 			const program = Effect.gen(function* () {
 				const cache = yield* CacheService;
-				const pkg1: PackageSpec = { name: "zod", version: "3.22.4" };
-				const pkg2: PackageSpec = { name: "@effect/cli", version: "0.73.0" };
+				const pkg1 = new PackageSpec({ name: "zod", version: "3.22.4" });
+				const pkg2 = new PackageSpec({ name: "@effect/cli", version: "0.73.0" });
 
 				// Write to different packages
 				yield* cache.write(pkg1, "index.d.ts", "zod content");
@@ -308,9 +264,7 @@ describe("CacheService", () => {
 				expect(exists2).toBe(true);
 			});
 
-			await Effect.runPromise(
-				program.pipe(Effect.provide(makeCacheServiceLayer(tempDir)), Effect.provide(NodeFileSystem.layer)),
-			);
+			await Effect.runPromise(program.pipe(Effect.provide(makeLayer())));
 		});
 	});
 });

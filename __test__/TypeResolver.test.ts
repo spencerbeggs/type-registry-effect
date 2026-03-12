@@ -2,16 +2,21 @@
  * Tests for TypeResolver service
  */
 
-import * as Effect from "effect/Effect";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { TypeResolverLive } from "../src/services/TypeResolver.js";
-import type { PackageJson, PackageSpec } from "../src/types.js";
+import { TypeResolverLive } from "../src/layers/TypeResolverLive.js";
+import type { PackageJson } from "../src/schemas/PackageJson.js";
+import { PackageSpec } from "../src/schemas/PackageSpec.js";
+import { TypeResolver } from "../src/services/TypeResolver.js";
+
+const run = <A, E>(effect: Effect.Effect<A, E, TypeResolver>) =>
+	Effect.runPromise(Effect.provide(effect, TypeResolverLive));
 
 describe("TypeResolver", () => {
-	const testPackage: PackageSpec = {
+	const testPackage = new PackageSpec({
 		name: "test-package",
 		version: "1.0.0",
-	};
+	});
 
 	describe("resolveMainEntry", () => {
 		it("should resolve from types field", async () => {
@@ -21,8 +26,12 @@ describe("TypeResolver", () => {
 				types: "./dist/index.d.ts",
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveMainEntry(packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/index.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -36,8 +45,12 @@ describe("TypeResolver", () => {
 				typings: "./lib/main.d.ts",
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveMainEntry(packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("lib/main.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -55,8 +68,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveMainEntry(packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/index.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -68,8 +85,12 @@ describe("TypeResolver", () => {
 				version: "1.0.0",
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveMainEntry(packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("index.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -89,8 +110,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveImport("./utils", packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./utils", packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/utils.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -108,8 +133,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveImport("./helper", packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./helper", packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/*.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -126,8 +155,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveImport("test-package/sub", packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("test-package/sub", packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/sub.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
@@ -153,8 +186,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const results = await Effect.runPromise(resolver.resolveTypeEntries(packageJson, testPackage));
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
 
 			expect(results.length).toBe(3); // main + 2 subpaths
 			expect(results.map((r) => r.filePath)).toContain("dist/index.d.ts");
@@ -174,8 +211,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const results = await Effect.runPromise(resolver.resolveTypeEntries(packageJson, testPackage));
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
 
 			expect(results.length).toBe(1); // Should be deduplicated
 			expect(results[0]?.filePath).toBe("dist/index.d.ts");
@@ -184,9 +225,11 @@ describe("TypeResolver", () => {
 
 	describe("findTypeDefinition", () => {
 		it("should find .d.ts for .js file", async () => {
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(
-				resolver.findTypeDefinition("src/utils.js", {} as PackageJson, testPackage),
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("src/utils.js", {} as PackageJson, testPackage);
+				}),
 			);
 
 			expect(result).not.toBeNull();
@@ -195,9 +238,11 @@ describe("TypeResolver", () => {
 		});
 
 		it("should find .d.mts for .mjs file", async () => {
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(
-				resolver.findTypeDefinition("src/module.mjs", {} as PackageJson, testPackage),
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("src/module.mjs", {} as PackageJson, testPackage);
+				}),
 			);
 
 			expect(result).not.toBeNull();
@@ -206,9 +251,11 @@ describe("TypeResolver", () => {
 		});
 
 		it("should find .d.cts for .cjs file", async () => {
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(
-				resolver.findTypeDefinition("lib/common.cjs", {} as PackageJson, testPackage),
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("lib/common.cjs", {} as PackageJson, testPackage);
+				}),
 			);
 
 			expect(result).not.toBeNull();
@@ -236,13 +283,17 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const pkg: PackageSpec = {
+			const pkg = new PackageSpec({
 				name: "@effect/cli",
 				version: "0.73.0",
-			};
+			});
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const entries = await Effect.runPromise(resolver.resolveTypeEntries(packageJson, pkg));
+			const entries = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, pkg);
+				}),
+			);
 
 			expect(entries.length).toBeGreaterThan(0);
 			expect(entries.some((e) => e.filePath.includes("Command.d.ts"))).toBe(true);
@@ -261,8 +312,12 @@ describe("TypeResolver", () => {
 				},
 			};
 
-			const resolver = await Effect.runPromise(TypeResolverLive);
-			const result = await Effect.runPromise(resolver.resolveImport("./utils", packageJson, testPackage));
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./utils", packageJson, testPackage);
+				}),
+			);
 
 			expect(result.filePath).toBe("dist/utils.d.ts");
 			expect(result.isTypeDefinition).toBe(true);
