@@ -208,6 +208,18 @@ export const getPackageVFS = (
 					message: `Package ${pkg.toString()} is not cached and autoFetch is disabled`,
 				}),
 			);
+		} else if (exists && autoFetch) {
+			// Check TTL staleness — re-fetch if cache entry has expired
+			const isStale = yield* cache.readMetadata(pkg).pipe(
+				Effect.map((meta) => {
+					if (meta.ttl === undefined) return false;
+					return meta.cachedAt + meta.ttl < Date.now();
+				}),
+				Effect.catchAll(() => Effect.succeed(false)),
+			);
+			if (isStale) {
+				yield* fetchAndCache(pkg, options);
+			}
 		}
 
 		return yield* cache.getVFS(pkg);

@@ -95,9 +95,13 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 					return fs.readFileString(metaPath).pipe(
 						Effect.mapError(mapToCacheError("read", metaPath)),
 						Effect.flatMap((content) =>
-							Schema.decodeUnknown(CacheMetadata)(JSON.parse(content)).pipe(
-								Effect.mapError(mapToCacheError("read", metaPath)),
-							),
+							Effect.try({
+								try: () => JSON.parse(content) as unknown,
+								catch: mapToCacheError("read", metaPath),
+							}),
+						),
+						Effect.flatMap((parsed) =>
+							Schema.decodeUnknown(CacheMetadata)(parsed).pipe(Effect.mapError(mapToCacheError("read", metaPath))),
 						),
 					);
 				},

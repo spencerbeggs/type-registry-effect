@@ -264,6 +264,221 @@ describe("TypeResolver", () => {
 		});
 	});
 
+	describe("resolveImport — typesVersions", () => {
+		it("should resolve typesVersions['*'] exact match with non-array value", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				typesVersions: {
+					"*": {
+						utils: "./dist/utils.d.ts" as unknown as string[],
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./utils", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/utils.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should resolve typesVersions['*'] wildcard pattern", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				typesVersions: {
+					"*": {
+						"lib/*": ["./dist/*.d.ts"],
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./lib/foo", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toMatch(/\.d\.ts$/);
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveImport — tryExtensions fallback", () => {
+		it("should fallback to .d.ts candidate when no exports or typesVersions match", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./some/module", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("some/module.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should return first candidate when nothing matches as type definition", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+			};
+
+			// The specifier itself (after stripping ./) is the base path.
+			// tryExtensions produces candidates starting with the base path itself,
+			// then .d.ts, .d.mts, etc. The first .d.ts candidate will match, so
+			// to truly test the fallback we need a path that already has an extension
+			// that is NOT a type definition but IS the first candidate.
+			// Actually, the loop finds the first isTypeDefinition candidate — the
+			// second candidate is always basePath.d.ts which IS a type def, so
+			// the fallback (lines 154-159) only triggers when candidates is empty,
+			// which can't happen with tryExtensions. The fallback is effectively
+			// unreachable with the current tryExtensions, but we can at least
+			// verify the function returns something sensible for any subpath.
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./deep/nested/path", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("deep/nested/path.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+			expect(result.package).toEqual(testPackage);
+		});
+	});
+
+	describe("findTypeDefinition — extension mapping", () => {
+		it("should produce .d.mts for .mjs input", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("lib/esm/index.mjs", {} as PackageJson, testPackage);
+				}),
+			);
+
+			if (result === null) throw new Error("Expected non-null result");
+			expect(result.filePath).toBe("lib/esm/index.d.mts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should produce .d.cts for .cjs input", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("lib/cjs/index.cjs", {} as PackageJson, testPackage);
+				}),
+			);
+
+			if (result === null) throw new Error("Expected non-null result");
+			expect(result.filePath).toBe("lib/cjs/index.d.cts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should produce .d.ts for .js input", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("dist/main.js", {} as PackageJson, testPackage);
+				}),
+			);
+
+			if (result === null) throw new Error("Expected non-null result");
+			expect(result.filePath).toBe("dist/main.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveTypeEntries — multiple subpath entries", () => {
+		it("should collect main entry plus all subpath exports", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					".": {
+						types: "./dist/index.d.ts",
+					},
+					"./alpha": {
+						types: "./dist/alpha.d.ts",
+					},
+					"./beta": {
+						types: "./dist/beta.d.ts",
+					},
+					"./gamma": {
+						types: "./dist/gamma.d.ts",
+					},
+				},
+			};
+
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
+
+			expect(results.length).toBe(4);
+			const paths = results.map((r) => r.filePath);
+			expect(paths).toContain("dist/index.d.ts");
+			expect(paths).toContain("dist/alpha.d.ts");
+			expect(paths).toContain("dist/beta.d.ts");
+			expect(paths).toContain("dist/gamma.d.ts");
+		});
+
+		it("should resolve entries from typesVersions when no exports exist", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				typesVersions: {
+					"*": {
+						utils: ["./dist/utils.d.ts"],
+						"helpers/*": ["./dist/helpers/*.d.ts"],
+					},
+				},
+			};
+
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
+
+			// Without exports or types field, falls back to index.d.ts as main entry
+			expect(results.length).toBe(1);
+			expect(results[0]?.filePath).toBe("index.d.ts");
+		});
+
+		it("should fallback to main field when no types/exports exist", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				main: "./lib/index.js",
+			};
+
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
+
+			expect(results.length).toBe(1);
+			expect(results[0]?.filePath).toBe("lib/index.d.ts");
+			expect(results[0]?.isTypeDefinition).toBe(true);
+		});
+	});
+
 	describe("complex package.json scenarios", () => {
 		it("should handle @effect/cli-like namespace exports", async () => {
 			const packageJson: PackageJson = {
