@@ -1,301 +1,240 @@
 # Architecture Overview
 
-This document provides a high-level overview of the effect-type-registry
-architecture, explaining how components work together to fetch, cache,
-and serve TypeScript type definitions.
+This document explains the service and layer architecture of type-registry-effect, how platform abstraction works, and how the TypeScript type system enforces correct dependency provision.
 
 ## Table of Contents
 
-1. [System Overview](#system-overview)
-2. [Core Components](#core-components)
-3. [Data Flow](#data-flow)
-4. [Design Decisions](#design-decisions)
-5. [Related Documentation](#related-documentation)
+1. [Service and Layer Architecture](#service-and-layer-architecture)
+2. [The Three Services](#the-three-services)
+3. [Layer Composition](#layer-composition)
+4. [Platform Abstraction](#platform-abstraction)
+5. [Type-Level Dependency Enforcement](#type-level-dependency-enforcement)
+6. [Data Flow](#data-flow)
 
-## System Overview
+## Service and Layer Architecture
 
-effect-type-registry is built around three main components that work
-together to provide fast, reliable access to TypeScript type
-definitions from npm packages:
+type-registry-effect is built on Effect's service pattern. Instead of a class with methods, the library exposes:
+
+- **Services** -- interfaces defined as `Context.Tag` classes that describe what operations are available
+- **Layers** -- implementations of those services that can be swapped at composition time
+- **Programs** -- functions in the `TypeRegistry` namespace that use services from the Effect context
 
 ```text
-┌─────────────────┐
-│  TypeRegistry   │ ← Main API (Promise-based)
-└────────┬────────┘
-         │
-    ┌────┴─────────────────────────┐
-    │                              │
-┌───▼────────────┐    ┌───────────▼──────┐
-│ CacheService   │    │ PackageFetcher   │
-│ (Disk Storage) │    │ (HTTP Client)    │
-└───┬────────────┘    └───────────┬──────┘
-    │                             │
-    │         ┌───────────────────┘
-    │         │
-┌───▼─────────▼────┐
-│  TypeResolver    │
-│ (Import Logic)   │
-└──────────────────┘
+Programs (TypeRegistry namespace)
+  |
+  | yield* CacheService / PackageFetcher / TypeResolver
+  v
+Services (Context.Tag interfaces)
+  |
+  | provided by
+  v
+Layers (Live implementations)
+  |
+  | require
+  v
+Platform abstractions (FileSystem, HttpClient)
+  |
+  | provided by
+  v
+Platform packages (@effect/platform-node, @effect/platform-bun, etc.)
 ```
 
-### Key Capabilities
+## The Three Services
 
-- **Version-Aware Caching** - Packages are cached by name and version
-  with configurable TTL
-- **Automatic Fetching** - Missing packages are fetched automatically
-  from jsDelivr CDN
-- **Complex Module Resolution** - Handles exports maps, typesVersions,
-  and legacy resolution
-- **VFS Generation** - Creates virtual file systems for TypeScript
-  language services
-- **Fault Tolerance** - HTTP retries, timeouts, and graceful error
-  handling
-- **Event-Based Observability** - Structured events for monitoring and
-  debugging
+### CacheService
 
-## Core Components
+Manages disk-based storage of type definitions.
 
-### 1. TypeRegistry
+**Tag:** `"type-registry-effect/CacheService"`
 
-The main API for managing type definitions. It provides a Promise-based
-interface that wraps the underlying Effect services.
+**Interface methods:**
 
-**Responsibilities:**
+- `exists(pkg)` -- Check if a package is cached
+- `read(pkg, filePath)` -- Read a cached file
+- `write(pkg, filePath, content)` -- Write a file to cache
+- `listFiles(pkg)` -- List all cached files for a package
+- `readMetadata(pkg)` -- Read cache metadata (version, timestamp, TTL)
+- `writeMetadata(pkg, metadata)` -- Write cache metadata
+- `getVFS(pkg)` -- Generate a VFS map from cached files
+- `remove(pkg)` -- Delete a cached package
 
-- Coordinate fetching and caching operations
-- Provide simple Promise API (no Effect-TS knowledge required)
-- Emit structured events for observability
-- Manage service lifecycle
+**Live implementation:** `CacheServiceLive` requires `FileSystem.FileSystem` from `@effect/platform`. The default cache directory follows the XDG Base Directory Specification (`~/.cache/effect-type-registry`).
 
-**Key Methods:**
+### PackageFetcher
+
+Downloads type definitions and metadata from the jsDelivr CDN.
+
+**Tag:** `"type-registry-effect/PackageFetcher"`
+
+**Interface methods:**
+
+- `getVersions(name)` -- Get all versions and tags for a package
+- `resolveVersion(name, ref)` -- Resolve a version reference to a specific version
+- `getFileTree(pkg)` -- Get the flat file tree from jsDelivr
+- `downloadFile(pkg, path)` -- Download a single file
+- `getPackageJson(pkg)` -- Download and validate package.json
+- `getTypeFiles(pkg)` -- Download all `.d.ts`, `.d.mts`, `.d.cts` files
+
+**Live implementation:** `PackageFetcherLive` requires `HttpClient.HttpClient` from `@effect/platform`. It uses exponential backoff retry (3 attempts) and a 30-second timeout.
+
+### TypeResolver
+
+Resolves import specifiers to file paths using package.json metadata. This is pure logic with no I/O.
+
+**Tag:** `"type-registry-effect/TypeResolver"`
+
+**Interface methods:**
+
+- `resolveImport(specifier, packageJson, pkg)` -- Resolve an import specifier to a file path
+- `resolveMainEntry(packageJson, pkg)` -- Find the main type entry point
+- `resolveTypeEntries(packageJson, pkg)` -- Find all type entry points
+- `findTypeDefinition(jsFilePath, packageJson, pkg)` -- Map a `.js` file to its `.d.ts` counterpart
+
+**Live implementation:** `TypeResolverLive` is a `Layer.succeed` -- it has no dependencies at all. Resolution strategies are applied in order:
+
+1. package.json `exports` field (including conditional exports and wildcards)
+2. package.json `typesVersions` field
+3. package.json `types` or `typings` field
+4. Conventional paths (`index.d.ts`, `index.d.mts`, etc.)
+
+## Layer Composition
+
+### TypeRegistryLive
+
+The main composition layer merges all three service layers:
 
 ```typescript
-// Fetch and cache a package
-await registry.fetchAndCache({ name: 'zod', version: '3.22.4' });
+const TypeRegistryLive: Layer<
+  CacheService | PackageFetcher | TypeResolver,  // provides
+  never,                                          // no construction errors
+  FileSystem.FileSystem | HttpClient.HttpClient   // requires
+> = Layer.mergeAll(CacheServiceLive, PackageFetcherLive, TypeResolverLive);
+```
 
-// Get VFS for multiple packages (auto-fetches if needed)
-const vfs = await registry.getVFS([
- { name: 'zod', version: '3.22.4' },
- { name: '@effect/cli', version: '0.73.0' },
-]);
+This layer provides all three services but still requires platform-specific `FileSystem` and `HttpClient` implementations. You must supply those yourself or use `NodeLayer`.
 
-// Resolve import specifier
-const resolved = await registry.resolveImport(
- { name: 'zod', version: '3.22.4' },
- './types'
+### NodeLayer
+
+The Node.js convenience layer composes `TypeRegistryLive` with platform implementations:
+
+```typescript
+const NodeLayer = TypeRegistryLive.pipe(
+  Layer.provide(NodeFileSystem.layer),
+  Layer.provide(NodeHttpClient.layerUndici),
 );
 ```
 
-**Why TypeRegistry?**
+`NodeLayer` is a fully closed layer -- it requires nothing from the context and provides all three services. This is what the Promise convenience API uses internally.
 
-This component provides a simple, Promise-based API so consumers don't
-need to understand Effect-TS. Internally, it uses Effect for robust
-error handling and composability, but this complexity is hidden from
-users.
-
-### 2. CacheService
-
-Manages disk-based caching of type definitions using the XDG Base
-Directory specification.
-
-**Responsibilities:**
-
-- Store and retrieve cached packages
-- Manage cache metadata (version, timestamp, TTL)
-- Generate VFS with proper `node_modules/` paths
-- Handle file I/O operations
-
-**Cache Structure:**
+### Layer Dependency Diagram
 
 ```text
-~/.cache/effect-type-registry/  (or $XDG_CACHE_HOME)
-├── @effect/
-│   └── cli@0.73.0/
-│       ├── .metadata.json    # Cache metadata (timestamp, TTL)
-│       ├── package.json       # Package manifest
-│       └── dist/
-│           └── dts/
-│               ├── index.d.ts
-│               └── Command.d.ts
-└── zod@3.22.4/
-    ├── .metadata.json
-    ├── package.json
-    └── lib/
-        └── index.d.ts
+NodeLayer
+  |
+  +-- TypeRegistryLive
+  |     |
+  |     +-- CacheServiceLive -----> requires FileSystem.FileSystem
+  |     +-- PackageFetcherLive ---> requires HttpClient.HttpClient
+  |     +-- TypeResolverLive -----> requires nothing (pure logic)
+  |
+  +-- NodeFileSystem.layer -------> provides FileSystem.FileSystem
+  +-- NodeHttpClient.layerUndici -> provides HttpClient.HttpClient
 ```
 
-**Why Disk Caching?**
+## Platform Abstraction
 
-Type definitions can be large (megabytes), and fetching them repeatedly
-is slow. Disk caching with TTL ensures fast access for repeated
-operations while allowing updates when packages change.
+The library never imports `node:fs` or `node:http` directly in its service implementations (except for `CacheServiceLive` which uses `node:path` for path manipulation). Instead, it depends on `@effect/platform` abstractions:
 
-### 3. PackageFetcher
+- `FileSystem.FileSystem` -- Abstraction over file I/O (read, write, mkdir, stat, remove)
+- `HttpClient.HttpClient` -- Abstraction over HTTP requests (get, post, etc.)
 
-Fetches package metadata and files from the jsDelivr CDN.
+This means the library's core logic could work on any platform that provides these abstractions -- Node.js, Bun, Deno, or even a browser with appropriate implementations. In practice, `@effect/platform-node` is the only platform package currently available, but the architecture does not prevent others.
 
-**Responsibilities:**
+The `/node` entry point is the only file that imports from `@effect/platform-node` directly. If you use the main entry point (`type-registry-effect`), your code stays platform-agnostic.
 
-- Resolve version references (latest, tags, semver ranges)
-- Download package.json for metadata
-- Fetch all type definition files (.d.ts, .d.mts, .d.cts)
-- Handle HTTP errors with retry and timeout
+## Type-Level Dependency Enforcement
 
-**jsDelivr API Endpoints:**
+Effect's type system ensures you cannot run a program without providing all required services. This happens at compile time, not runtime.
 
-```text
-# Get package versions
-https://data.jsdelivr.com/v1/package/npm/{name}
+### How It Works
 
-# Download files
-https://cdn.jsdelivr.com/npm/{name}@{version}/{file}
+Every `TypeRegistry` function declares what services it needs in the `R` (requirements) position of `Effect<A, E, R>`:
+
+```typescript
+// hasCached needs CacheService
+hasCached(pkg: PackageSpec): Effect<boolean, CacheError, CacheService>
+
+// fetchAndCache needs CacheService AND PackageFetcher
+fetchAndCache(pkg: PackageSpec): Effect<void, NetworkError | ParseError | CacheError, CacheService | PackageFetcher>
+
+// resolveImport needs CacheService AND TypeResolver
+resolveImport(pkg: PackageSpec, specifier: string): Effect<ResolvedModule, CacheError | ResolutionError, CacheService | TypeResolver>
 ```
 
-**Why jsDelivr?**
+If you try to run a program without providing the required services, TypeScript produces a compile error:
 
-jsDelivr provides a free, reliable CDN for npm packages with excellent
-global performance. It supports version resolution and file tree
-traversal, making it ideal for fetching type definitions.
+```typescript
+// This will NOT compile:
+// Effect.runPromise(TypeRegistry.hasCached(pkg))
+// Error: Type 'CacheService' is not assignable to type 'never'
 
-### 4. TypeResolver
+// This WILL compile:
+Effect.runPromise(Effect.provide(TypeRegistry.hasCached(pkg), NodeLayer))
+```
 
-Resolves import specifiers to file paths using package.json metadata.
+### Why This Matters
 
-**Responsibilities:**
+Traditional dependency injection frameworks catch missing dependencies at runtime -- your tests pass but production crashes. With Effect's approach, the compiler prevents you from forgetting a dependency entirely. If it compiles, all services are provided.
 
-- Resolve package.json `exports` field (including conditional exports)
-- Resolve package.json `typesVersions` field
-- Handle wildcard pattern matching
-- Map JavaScript files to TypeScript definitions (.js → .d.ts)
-- Find main entry points (types, typings, exports, main)
-
-**Resolution Strategies (in order):**
-
-1. **Exports field** - Modern package.json exports with conditions
-2. **TypesVersions** - TypeScript version-specific type mappings
-3. **Types/Typings field** - Legacy type definition location
-4. **Conventional paths** - index.d.ts, index.ts, etc.
-
-**Why Complex Resolution?**
-
-Modern npm packages use sophisticated module resolution with conditional
-exports, TypeScript version mappings, and various file extensions.
-Supporting all these patterns ensures compatibility with the entire npm
-ecosystem.
+This is especially valuable for this library because the platform layer requirements (`FileSystem`, `HttpClient`) are easy to forget. The type system makes the requirement explicit and impossible to miss.
 
 ## Data Flow
 
-### Fetching a Package
+### Fetching and Caching a Package
 
 ```text
-1. User calls registry.fetchAndCache({ name: 'zod', version: '3.22.4' })
-   │
-   ├─→ 2. Check cache with CacheService.exists()
-   │    │
-   │    ├─→ If cached and fresh: Done ✓
-   │    │
-   │    └─→ If missing or stale: Continue to fetch
-   │
-   ├─→ 3. Fetch package.json from jsDelivr via PackageFetcher
-   │    │
-   │    └─→ Resolve version if needed (latest, tags, ranges)
-   │
-   ├─→ 4. Download all type definition files
-   │    │
-   │    └─→ Retry on failure (exponential backoff)
-   │
-   ├─→ 5. Write to cache via CacheService
-   │    │
-   │    └─→ Store package.json, .d.ts files, metadata
-   │
-   └─→ 6. Emit package.loaded event
-        │
-        └─→ Consumer receives event via onLogEvent callback
+1. TypeRegistry.fetchAndCache(pkg)
+   |
+2. PackageFetcher.getPackageJson(pkg)
+   |   HTTP GET https://cdn.jsdelivr.net/npm/{name}@{version}/package.json
+   |   Validated with PackageJson Schema
+   |
+3. PackageFetcher.getTypeFiles(pkg)
+   |   HTTP GET https://data.jsdelivr.com/v1/package/npm/{name}@{version}/flat
+   |   Filter for .d.ts / .d.mts / .d.cts files
+   |   Download each file from CDN
+   |
+4. CacheService.write(pkg, "package.json", content)
+   CacheService.write(pkg, "lib/index.d.ts", content)
+   ...
+   |
+5. CacheService.writeMetadata(pkg, { cachedAt, version, ttl })
 ```
 
-### Generating a VFS
+### Building a VFS for Multiple Packages
 
 ```text
-1. User calls registry.getVFS([{ name: 'zod', version: '3.22.4' }])
-   │
-   ├─→ 2. For each package:
-   │    │
-   │    ├─→ Call ensureCached() (auto-fetch if missing)
-   │    │
-   │    └─→ Call CacheService.getVFS()
-   │
-   ├─→ 3. Merge all package VFS into one
-   │    │
-   │    └─→ Keys: node_modules/{name}/{file}
-   │
-   └─→ 4. Return combined VFS
-        │
-        └─→ Consumer uses with TypeScript language service
+1. TypeRegistry.getVFS([pkg1, pkg2, pkg3])
+   |
+2. Effect.forEach with concurrency: 5
+   |   For each package:
+   |     a. CacheService.exists(pkg) -- check cache
+   |     b. If missing: fetchAndCache(pkg) -- fetch from CDN
+   |     c. CacheService.getVFS(pkg) -- read all files into Map
+   |
+3. Merge all per-package VFS maps into one combined VFS
+   |   Keys: "node_modules/{name}/{file}"
+   |   Values: file contents as strings
+   |
+4. Graceful degradation:
+   |   If some packages fail, continue with successful ones
+   |   Only fail if ALL packages fail
+   |
+5. Return combined VFS: Map<string, string>
 ```
-
-## Design Decisions
-
-### Why Effect-TS?
-
-Effect-TS provides:
-
-- **Composable error handling** - Type-safe error channels
-- **Retry and timeout primitives** - Built-in fault tolerance
-- **Service dependencies** - Dependency injection without manual wiring
-- **Testing** - Easy to mock services for unit tests
-
-While Effect adds complexity, it enables robust error handling and
-fault tolerance that would be difficult to implement manually.
-
-### Why XDG Base Directory?
-
-Following the XDG Base Directory specification ensures the cache is
-stored in a standard location that respects user preferences and
-doesn't clutter the home directory.
-
-Users can override the cache directory via:
-
-- `$XDG_CACHE_HOME` environment variable
-- `cacheDir` option in TypeRegistry.create()
-
-### Why Event-Based Observability?
-
-Instead of logging directly from services, TypeRegistry emits
-structured events that consumers can handle however they need. This
-provides:
-
-- **Zero dependencies** - No Effect-TS logging required
-- **Flexible formatting** - JSON, pretty-print, metrics, etc.
-- **Clean separation** - Business logic stays logging-free
-- **Type safety** - Events validated with Effect Schema
-
-See the [Observability guide](../guides/observability.md) for details.
-
-### Why Graceful Degradation?
-
-When fetching multiple packages, if one package fails, the others
-should still succeed. This "partial success" pattern ensures tools
-remain functional even when some dependencies are unavailable.
-
-For example, if fetching types for 10 packages and 1 fails, the VFS
-will include the 9 successful packages and the tool can continue
-working.
 
 ## Related Documentation
 
-**Internal Design Docs:**
-
-- [Observability](../../.claude/design/effect-type-registry/observability.md) -
-  Event-based observability architecture
-
-**User Guides:**
-
-- [Caching Guide](../guides/caching.md) - Cache configuration and
-  optimization
-- [Observability Guide](../guides/observability.md) - Using the event
-  system
-
-**Package Documentation:**
-
-- [README](../../README.md) - Package overview and API reference
-- [CLAUDE.md](../../CLAUDE.md) - Development guide
+- [Getting Started](../guides/getting-started.md) -- Installation and usage patterns
+- [Advanced Usage](../guides/advanced-usage.md) -- Custom layers, error handling, testing
+- [Caching Guide](../guides/caching.md) -- Cache configuration and management

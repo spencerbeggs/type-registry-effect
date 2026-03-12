@@ -1,153 +1,44 @@
 # type-registry-effect
 
-Effect-based type definition registry for TypeScript with version-aware caching, fault tolerance, and observability.
+[![npm version](https://img.shields.io/npm/v/type-registry-effect)](https://www.npmjs.com/package/type-registry-effect)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Built with [Effect](https://effect.website) for robust error handling, composable async operations, and production-ready fault tolerance.
+Fetch, cache, and resolve TypeScript type definitions from npm packages for use with Twoslash and other documentation tooling that needs type-aware code samples.
 
 ## Features
 
-- ✅ Version-aware caching of type definitions
-- ✅ Disk-based storage by package and version
-- ✅ Generates VFS for Twoslash integration
-- ✅ HTTP retry with exponential backoff
-- ✅ Event-based observability with structured events
-- ✅ Graceful error handling and partial success
-- ✅ Framework-agnostic (works with any TypeScript tool)
+- Composable Effect programs with typed errors and explicit service requirements
+- Disk-based caching with XDG Base Directory compliance and TTL support
+- Virtual file system generation compatible with @typescript/vfs and Twoslash
+- Module resolution via package.json exports, typesVersions, and legacy fields
+- Concurrent package loading with graceful degradation on partial failures
 
 ## Installation
 
 ```bash
-npm install effect-type-registry
+npm install type-registry-effect effect @effect/platform
 ```
+
+See [docs/guides/getting-started.md](./docs/guides/getting-started.md) for peer dependency details.
 
 ## Quick Start
 
 ```typescript
-import { TypeRegistry } from "type-registry-effect"
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
+import { Effect } from "effect";
 
-// Create registry instance
-const registry = TypeRegistry.create({
- cacheDir: "~/.cache/my-docs",
- ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
-})
+const program = TypeRegistry.getVFS([
+  new PackageSpec({ name: "zod", version: "3.23.8" }),
+  new PackageSpec({ name: "@effect/schema", version: "0.79.0" }),
+]);
 
-// Fetch and cache a package
-await registry.fetchAndCache({
- name: "@effect/cli",
- version: "0.73.0",
-})
-
-// Get VFS for Twoslash
-const vfs = await registry.getVFS([
- { name: "@effect/cli", version: "0.73.0" },
- { name: "zod", version: "4.0.0" },
-])
-```
-
-## Basic Usage
-
-### Check if Package is Cached
-
-```typescript
-const isCached = await registry.hasCached({
- name: "@effect/cli",
- version: "0.73.0",
-})
-```
-
-### Ensure Package is Cached
-
-Auto-fetch if not present:
-
-```typescript
-await registry.ensureCached({
- name: "zod",
- version: "4.0.0",
-})
-```
-
-### Clear Package Cache
-
-```typescript
-await registry.clearCache({ name: "@effect/cli", version: "0.73.0" })
-```
-
-## Cache Structure
-
-The cache follows the
-[XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
-
-- Uses `$XDG_CACHE_HOME/effect-type-registry` if `XDG_CACHE_HOME` is set
-- Falls back to `~/.cache/effect-type-registry` otherwise
-- Can be overridden via the `cacheDir` option
-
-```text
-~/.cache/effect-type-registry/
-├── @effect/
-│   └── cli@0.73.0/
-│       ├── .metadata.json
-│       ├── package.json
-│       └── dist/
-│           └── dts/
-│               ├── index.d.ts
-│               └── ...
-└── zod@4.0.0/
-    ├── .metadata.json
-    ├── package.json
-    └── lib/
-        └── ...
-```
-
-## Configuration Options
-
-```typescript
-interface TypeRegistryOptions {
- cacheDir?: string // Cache location (default: XDG compliant)
- ttl?: number // Cache TTL in ms (default: 7 days)
- cdnProvider?: "unpkg" | "jsdelivr" // CDN provider
- npmRegistry?: string // Custom npm registry
- onLogEvent?: (event: LogEvent) => void // Event handler
- maxRetries?: number // HTTP retries (default: 3)
- requestTimeout?: number // Timeout in ms (default: 30000)
- maxConcurrency?: number // Parallel fetches (default: 5)
-}
+const vfs = await Effect.runPromise(Effect.provide(program, NodeLayer));
 ```
 
 ## Documentation
 
-Comprehensive guides and references:
-
-- **[Getting Started Guide](./docs/guides/getting-started.md)** - Detailed
-  setup and usage
-- **[Caching Guide](./docs/guides/caching.md)** - Cache management and
-  optimization
-- **[Observability Guide](./docs/guides/observability.md)** - Event system
-  and logging
-- **[Advanced Usage Guide](./docs/guides/advanced-usage.md)** - Direct
-  service usage and Effect-TS patterns
-- **[Troubleshooting Guide](./docs/guides/troubleshooting.md)** - Common
-  issues and solutions
-- **[Architecture Overview](./docs/architecture/overview.md)** - Internal
-  design and components
-
-## API Reference
-
-### TypeRegistry
-
-Main API for managing type definitions:
-
-- **`create(options)`** - Create registry instance
-- **`fetchAndCache(pkg)`** - Fetch and cache package types
-- **`ensureCached(pkg)`** - Ensure package is cached (auto-fetch if needed)
-- **`hasCached(pkg)`** - Check if package is cached
-- **`getPackageVFS(pkg, options)`** - Get VFS for single package
-- **`getVFS(packages, options)`** - Get combined VFS for multiple packages
-- **`resolveImport(pkg, specifier)`** - Resolve import to file path
-- **`getTypeEntries(pkg)`** - Get all type entry points
-- **`clearCache(pkg)`** - Remove package from cache
-
-See [Advanced Usage Guide](./docs/guides/advanced-usage.md) for direct
-service access (PackageFetcher, TypeResolver) and XDG utilities.
+For detailed guides, architecture, and API reference, see [docs/](./docs/).
 
 ## License
 

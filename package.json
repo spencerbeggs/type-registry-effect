@@ -44,26 +44,37 @@
 		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
-		"@effect/cluster": "^0.56.1",
-		"@effect/experimental": "^0.58.0",
-		"@effect/platform": "^0.94.1",
-		"@effect/platform-node": "^0.104.0",
-		"@effect/rpc": "^0.73.0",
-		"@effect/sql": "^0.49.0",
-		"@effect/workflow": "^0.16.0",
-		"effect": "^3.19.14",
-		"semver-effect": "^0.1.0",
-		"typescript": "^5.7.3",
-		"undici": "^7.18.2",
-		"zod": "^4.3.6"
+		"semver-effect": "^0.1.0"
 	},
 	"devDependencies": {
+		"@effect/platform": "^0.94.1",
+		"@effect/platform-node": "^0.104.0",
 		"@savvy-web/changesets": "^0.4.2",
 		"@savvy-web/commitlint": "^0.4.0",
 		"@savvy-web/lint-staged": "^0.5.1",
 		"@savvy-web/rslib-builder": "^0.17.0",
 		"@savvy-web/vitest": "^0.2.1",
-		"@typescript/vfs": "^1.6.4"
+		"@typescript/vfs": "^1.6.4",
+		"effect": "^3.19.14",
+		"typescript": "^5.7.3"
+	},
+	"peerDependencies": {
+		"@effect/platform": "^0.94.1",
+		"@effect/platform-node": "^0.104.0",
+		"@typescript/vfs": "^1.6.4",
+		"effect": "^3.19.14",
+		"typescript": "^5.7.3"
+	},
+	"peerDependenciesMeta": {
+		"@effect/platform-node": {
+			"optional": true
+		},
+		"@typescript/vfs": {
+			"optional": true
+		},
+		"typescript": {
+			"optional": true
+		}
 	},
 	"packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be",
 	"devEngines": {

@@ -1,48 +1,37 @@
-# effect-type-registry Documentation
+# type-registry-effect Documentation
 
-Comprehensive documentation for the effect-type-registry package.
+## What This Library Does
 
-## Overview
+type-registry-effect fetches TypeScript type definitions from the jsDelivr CDN, caches them to disk, resolves module imports from package.json exports and typesVersions fields, and builds virtual file systems (VFS) for use with @typescript/vfs and Twoslash. It is designed for documentation tooling that needs type-aware code samples.
 
-effect-type-registry is an Effect-based TypeScript type definition
-registry with version-aware caching, fault tolerance, and observability.
-It fetches and caches type definitions from npm packages via jsDelivr CDN,
-generating virtual file systems (VFS) for tools like Twoslash.
+The library exposes composable `Effect` programs -- not a class with methods. Every function returns an `Effect<A, E, R>` with typed errors and explicit service requirements that the TypeScript compiler enforces at build time.
 
-## Quick Links
+## Who This Is For
 
-- [Package README](../README.md) - Installation and quick start
-- [GitHub Repository](
-  https://github.com/spencerbeggs/website/tree/main/pkgs/effect-type-registry)
-
-## Architecture
-
-Understanding the internal design and component organization:
-
-- [Architecture Overview](./architecture/overview.md) - High-level
-  architecture and component design
+- Documentation site authors who use Twoslash for interactive TypeScript code blocks
+- Build tool developers who need to resolve and bundle type definitions
+- TypeScript developers familiar with Effect who want composable, testable type-fetching programs
+- TypeScript developers new to Effect who want a Node.js convenience API
 
 ## Guides
 
-Step-by-step guides for common tasks:
+Step-by-step instructions for common tasks:
 
-- [Getting Started](./guides/getting-started.md) - Detailed installation
-  and first steps
-- [Caching](./guides/caching.md) - Cache configuration, optimization,
-  and management
-- [Observability](./guides/observability.md) - Event system, logging,
-  and monitoring
-- [Advanced Usage](./guides/advanced-usage.md) - Direct service usage,
-  Effect-TS patterns, and XDG utilities
-- [Troubleshooting](./guides/troubleshooting.md) - Common issues and
-  solutions
+- [Getting Started](./guides/getting-started.md) -- Installation, peer dependencies, and three usage patterns
+- [Caching](./guides/caching.md) -- Cache configuration, XDG directories, and CacheMetadata
+- [Advanced Usage](./guides/advanced-usage.md) -- Custom layers, error handling, concurrent loading, and testing
+- [Observability](./guides/observability.md) -- Event system (note: being redesigned for Effect logging)
+- [Troubleshooting](./guides/troubleshooting.md) -- Peer dependency mismatches, missing layers, and typed errors
 
-## Reference
+## Architecture
 
-- [API Documentation](../README.md#api-reference) - Complete API
-  reference
+Understanding the service and layer design:
 
-## Contributing
+- [Architecture Overview](./architecture/overview.md) -- Service/Layer diagram, platform abstraction, and type-level dependency enforcement
 
-See the [main README](../README.md#development-status) for
-development status and planned features.
+## Quick Reference
+
+| Entry Point | What It Provides |
+| --- | --- |
+| `type-registry-effect` | Platform-agnostic Effect programs, schemas, errors, services, layers |
+| `type-registry-effect/node` | `NodeLayer` (Node.js platform layer) and Promise convenience API |

@@ -1,406 +1,239 @@
 # Advanced Usage
 
-This guide covers advanced usage patterns for `effect-type-registry`,
-including direct service usage, Effect-TS patterns, and low-level APIs.
+This guide covers custom layers, error handling, import resolution,
+testing with mock services, and Twoslash integration.
 
-## Advanced TypeRegistry Methods
+## Custom layers
 
-Beyond the basic `fetchAndCache` and `getVFS` methods, TypeRegistry provides
-several advanced methods for fine-grained control.
+The default `NodeLayer` wires all services with `NodeFileSystem` and
+`NodeHttpClient`. You can replace individual layers for custom behavior.
 
-### Import Resolution
+### Custom cache directory
 
-Resolve import specifiers to file paths:
-
-```typescript
-import { TypeRegistry } from "effect-type-registry"
-
-const registry = TypeRegistry.create()
-
-// Resolve import specifier to file path
-const resolved = await registry.resolveImport(
- { name: "@effect/cli", version: "0.73.0" },
- "./Command",
-)
-// => {
-//   filePath: "dist/dts/Command.d.ts",
-//   isTypeDefinition: true
-// }
-```
-
-This is useful for:
-
-- Building custom module resolution systems
-- Understanding package exports structure
-- Debugging import failures
-
-### Type Entry Points
-
-Get all type entry points for a package:
+Use `makeNodeCacheLayer` to specify a cache directory:
 
 ```typescript
-const entries = await registry.getTypeEntries({
- name: "@effect/cli",
- version: "0.73.0",
-})
-// => [
-//   { filePath: "dist/dts/index.d.ts", isTypeDefinition: true },
-//   { filePath: "dist/dts/Command.d.ts", isTypeDefinition: true },
-//   ...
-// ]
-```
-
-This reveals:
-
-- All exported modules from package.json `exports` field
-- Legacy `types` or `typings` entry points
-- Conditional exports for different environments
-
-### Single Package VFS
-
-Get VFS for a single package without auto-fetching:
-
-```typescript
-const pkgVfs = await registry.getPackageVFS(
- { name: "zod", version: "3.22.4" },
- { autoFetch: false }, // Throws if not cached
-)
-```
-
-Options:
-
-- `autoFetch: false` - Throw error if package not cached
-- `autoFetch: true` (default) - Fetch package if not cached
-
-## Using PackageFetcher Directly
-
-The `PackageFetcher` service handles HTTP operations for fetching package
-metadata and files. You can use it directly for custom integrations.
-
-### PackageFetcher Basic Usage
-
-```typescript
+import { Effect, Layer } from "effect";
+import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 import {
- PackageFetcher,
- PackageFetcherLive,
-} from "effect-type-registry"
-import { NodeHttpClient } from "@effect/platform-node"
-import * as Effect from "effect/Effect"
+  TypeRegistry,
+  PackageSpec,
+  makeNodeCacheLayer,
+  PackageFetcherLive,
+  TypeResolverLive,
+} from "type-registry-effect";
+
+const CustomLayer = Layer.mergeAll(
+  makeNodeCacheLayer("/tmp/my-types-cache"),
+  PackageFetcherLive,
+  TypeResolverLive,
+).pipe(
+  Layer.provide(NodeFileSystem.layer),
+  Layer.provide(NodeHttpClient.layerUndici),
+);
+
+const program = TypeRegistry.getVFS([
+  new PackageSpec({ name: "zod", version: "3.23.8" }),
+]);
+
+const vfs = await Effect.runPromise(Effect.provide(program, CustomLayer));
+```
+
+### Replacing a service entirely
+
+Every service is a `Context.Tag`. Provide your own implementation via
+`Layer.succeed`:
+
+```typescript
+import { Layer, Effect } from "effect";
+import { CacheService, type CacheServiceShape } from "type-registry-effect";
+
+const InMemoryCache = Layer.succeed(CacheService, {
+  exists: () => Effect.succeed(false),
+  read: () => Effect.fail(new CacheError({ message: "not implemented" })),
+  write: () => Effect.void,
+  listFiles: () => Effect.succeed([]),
+  readMetadata: () => Effect.fail(new CacheError({ message: "no metadata" })),
+  writeMetadata: () => Effect.void,
+  getVFS: () => Effect.succeed(new Map()),
+  remove: () => Effect.void,
+} satisfies CacheServiceShape);
+```
+
+## Error handling
+
+Every `TypeRegistry` function declares its error type in the `E`
+position. Use `Effect.catchTag` to handle specific errors:
+
+```typescript
+import { Effect } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+
+const program = TypeRegistry.fetchAndCache(
+  new PackageSpec({ name: "nonexistent", version: "1.0.0" }),
+).pipe(
+  Effect.catchTag("NetworkError", (err) =>
+    Effect.logWarning(`Network issue: ${err.message}`),
+  ),
+  Effect.catchTag("ParseError", (err) =>
+    Effect.logWarning(`CDN returned invalid data: ${err.message}`),
+  ),
+  Effect.catchTag("CacheError", (err) =>
+    Effect.logWarning(`Disk write failed: ${err.message}`),
+  ),
+);
+```
+
+### Error types
+
+| Tag | When it occurs |
+| --- | --- |
+| `CacheError` | Disk read/write failure |
+| `NetworkError` | HTTP request failure or timeout |
+| `PackageNotFoundError` | Package or version does not exist on CDN |
+| `ParseError` | CDN response is not valid JSON or schema validation fails |
+| `ResolutionError` | Import specifier cannot be resolved from package.json |
+| `TimeoutError` | Operation exceeded time limit |
+
+All errors extend `Data.TaggedError` and carry a `_tag` field for
+pattern matching.
+
+## Import resolution
+
+Resolve import specifiers against a cached package's `exports` and
+`typesVersions` fields:
+
+```typescript
+import { Effect } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
 
 const program = Effect.gen(function* () {
- const fetcher = yield* PackageFetcher
+  const pkg = new PackageSpec({ name: "@effect/cli", version: "0.73.0" });
+  yield* TypeRegistry.fetchAndCache(pkg);
 
- // Resolve version reference
- const version = yield* fetcher.resolveVersion("zod", "latest")
- // => "3.22.4"
+  // Resolve a single import
+  const resolved = yield* TypeRegistry.resolveImport(pkg, "./Command");
+  console.log(resolved.filePath); // e.g., "dist/dts/Command.d.ts"
 
- // Get package metadata
- const metadata = yield* fetcher.getVersions("zod")
- // => { tags: { latest: "3.22.4", ... }, versions: [...] }
+  // Get all type entry points
+  const entries = yield* TypeRegistry.getTypeEntries(pkg);
+  for (const entry of entries) {
+    console.log(entry.filePath);
+  }
+});
 
- // Download package.json
- const packageJson = yield* fetcher.getPackageJson({
-  name: "zod",
-  version: "3.22.4",
- })
-
- // Get all type definition files
- const typeFiles = yield* fetcher.getTypeFiles({
-  name: "zod",
-  version: "3.22.4",
- })
-
- return typeFiles
-})
-
-const typeFiles = await program.pipe(
- Effect.provide(PackageFetcherLive),
- Effect.provide(NodeHttpClient.layerUndici),
- Effect.runPromise,
-)
+await Effect.runPromise(Effect.provide(program, NodeLayer));
 ```
 
-### Version Resolution
+## Testing with mock layers
 
-PackageFetcher can resolve various version specifiers:
-
-```typescript
-// Resolve tags
-const latest = await fetcher.resolveVersion("zod", "latest")
-const next = await fetcher.resolveVersion("zod", "next")
-
-// Resolve exact versions
-const exact = await fetcher.resolveVersion("zod", "3.22.4")
-
-// Note: Semver range resolution not yet implemented
-```
-
-### File Operations
-
-Get files from a package:
+Services are injected via layers, making it straightforward to test
+without network or disk access:
 
 ```typescript
-// Get all type definition files (.d.ts, .d.mts, .d.cts)
-const typeFiles = await fetcher.getTypeFiles({
- name: "@effect/schema",
- version: "0.90.0",
-})
-
-// Get package.json
-const packageJson = await fetcher.getPackageJson({
- name: "@effect/schema",
- version: "0.90.0",
-})
-```
-
-## Using TypeResolver Directly
-
-The `TypeResolver` service handles module resolution logic based on
-package.json configuration. This is useful for custom build tools or
-module resolution systems.
-
-### TypeResolver Basic Usage
-
-```typescript
-import { TypeResolver, TypeResolverLive } from "effect-type-registry"
-import * as Effect from "effect/Effect"
-
-const packageJson = {
- name: "@effect/cli",
- version: "0.73.0",
- types: "./dist/dts/index.d.ts",
- exports: {
-  ".": {
-   types: "./dist/dts/index.d.ts",
-  },
-  "./Command": {
-   types: "./dist/dts/Command.d.ts",
-  },
- },
-}
-
-const pkg = { name: "@effect/cli", version: "0.73.0" }
-
-const program = Effect.gen(function* () {
- const resolver = yield* TypeResolver
-
- // Resolve main entry point
- const mainEntry = yield* resolver.resolveMainEntry(packageJson, pkg)
- // => {
- //   filePath: "dist/dts/index.d.ts",
- //   isTypeDefinition: true,
- //   ...
- // }
-
- // Resolve import specifier
- const commandModule = yield* resolver.resolveImport(
-  "./Command",
-  packageJson,
-  pkg,
- )
- // => {
- //   filePath: "dist/dts/Command.d.ts",
- //   isTypeDefinition: true,
- //   ...
- // }
-
- // Get all type entry points
- const entries = yield* resolver.resolveTypeEntries(packageJson, pkg)
- // => [
- //   { filePath: "dist/dts/index.d.ts", ... },
- //   { filePath: "dist/dts/Command.d.ts", ... }
- // ]
-
- // Find type definition for a JS file
- const typeDef = yield* resolver.findTypeDefinition(
-  "src/utils.js",
-  packageJson,
-  pkg,
- )
- // => {
- //   filePath: "src/utils.d.ts",
- //   isTypeDefinition: true,
- //   ...
- // }
-
- return entries
-})
-
-const entries = await Effect.runPromise(program)
-```
-
-### Resolution Strategies
-
-TypeResolver implements several resolution strategies in order:
-
-1. **package.json `exports` field** - Modern exports with conditional exports
-2. **package.json `typesVersions` field** - TypeScript-specific version
-   mappings
-3. **package.json `types` or `typings` field** - Legacy type entry points
-4. **Conventional paths** - `.d.ts`, `.ts`, `index.d.ts`, `index.ts`
-
-### Handling Exports Maps
-
-Complex exports maps are fully supported:
-
-```typescript
-const packageJson = {
- exports: {
-  ".": {
-   types: "./dist/index.d.ts",
-   import: "./dist/index.mjs",
-   require: "./dist/index.cjs",
-  },
-  "./utils": {
-   types: "./dist/utils.d.ts",
-   import: "./dist/utils.mjs",
-  },
-  "./internal/*": {
-   types: "./dist/internal/*.d.ts",
-  },
- },
-}
-
-// Resolves to "dist/index.d.ts"
-await resolver.resolveImport(".", packageJson, pkg)
-
-// Resolves to "dist/utils.d.ts"
-await resolver.resolveImport("./utils", packageJson, pkg)
-
-// Wildcard resolution: resolves to "dist/internal/helpers.d.ts"
-await resolver.resolveImport("./internal/helpers", packageJson, pkg)
-```
-
-## XDG Base Directory Utilities
-
-The package exports utilities for working with XDG Base Directory
-specification paths:
-
-```typescript
+import { Effect, Layer } from "effect";
 import {
- getDefaultCacheDir,
- getXdgCacheHome,
- getXdgConfigHome,
- getXdgDataHome,
-} from "effect-type-registry"
+  TypeRegistry,
+  PackageSpec,
+  PackageFetcher,
+  CacheService,
+  TypeResolver,
+  TypeResolverLive,
+} from "type-registry-effect";
 
-// Get XDG cache directory ($XDG_CACHE_HOME or ~/.cache)
-const cacheHome = getXdgCacheHome()
+// Inline mock for PackageFetcher
+const MockFetcher = Layer.succeed(PackageFetcher, {
+  getPackageJson: () =>
+    Effect.succeed({ name: "mock", version: "1.0.0" }),
+  getTypeFiles: () =>
+    Effect.succeed(new Map([["index.d.ts", "export declare const x: number;"]])),
+  resolveVersion: (_name, _ref) =>
+    Effect.succeed("1.0.0"),
+});
 
-// Get XDG config directory ($XDG_CONFIG_HOME or ~/.config)
-const configHome = getXdgConfigHome()
+// Inline mock for CacheService
+const MockCache = Layer.succeed(CacheService, {
+  exists: () => Effect.succeed(false),
+  read: () => Effect.fail(new CacheError({ message: "not cached" })),
+  write: () => Effect.void,
+  listFiles: () => Effect.succeed([]),
+  readMetadata: () => Effect.fail(new CacheError({ message: "no metadata" })),
+  writeMetadata: () => Effect.void,
+  getVFS: () => Effect.succeed(new Map([
+    ["node_modules/mock/index.d.ts", "export declare const x: number;"],
+  ])),
+  remove: () => Effect.void,
+});
 
-// Get XDG data directory ($XDG_DATA_HOME or ~/.local/share)
-const dataHome = getXdgDataHome()
+const TestLayer = Layer.mergeAll(MockFetcher, MockCache, TypeResolverLive);
 
-// Get default cache dir for effect-type-registry
-const defaultCacheDir = getDefaultCacheDir()
-// => $XDG_CACHE_HOME/effect-type-registry or
-//    ~/.cache/effect-type-registry
+// Run tests against the mock layer
+const vfs = await Effect.runPromise(
+  Effect.provide(
+    TypeRegistry.getVFS([new PackageSpec({ name: "mock", version: "1.0.0" })]),
+    TestLayer,
+  ),
+);
 ```
 
-### Custom Cache Directories
+## Twoslash integration
 
-Use XDG utilities to build custom cache paths:
+Use `createTypeScriptCache` from the Node.js entry point to build a
+virtual TypeScript environment for Twoslash:
 
 ```typescript
-import { getXdgCacheHome, TypeRegistry } from "effect-type-registry"
-import { join } from "node:path"
+import * as ts from "typescript";
+import { PackageSpec } from "type-registry-effect";
+import { createTypeScriptCache } from "type-registry-effect/node";
 
-// Custom cache directory following XDG conventions
-const customCacheDir = join(getXdgCacheHome(), "my-docs-tool", "types")
+const packages = [
+  new PackageSpec({ name: "zod", version: "3.23.8" }),
+  new PackageSpec({ name: "@effect/schema", version: "0.79.0" }),
+];
 
-const registry = TypeRegistry.create({
- cacheDir: customCacheDir,
-})
+const compilerOptions: ts.CompilerOptions = {
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.ESNext,
+  moduleResolution: ts.ModuleResolutionKind.Bundler,
+  strict: true,
+};
+
+// Returns Map<string, VirtualTypeScriptEnvironment>
+const cache = await createTypeScriptCache(packages, compilerOptions);
 ```
 
-## Effect-TS Patterns
+This requires the optional `typescript` and `@typescript/vfs` peer
+dependencies.
 
-If you're building Effect-TS applications, you can compose services
-with your own Effect programs.
+## Concurrent package loading
 
-### Layer Composition
-
-Compose TypeRegistry services with your own layers:
+`TypeRegistry.getVFS` fetches up to 5 packages concurrently and
+continues on partial failures. If some packages fail, the VFS still
+contains the successful ones. It only fails when ALL packages fail:
 
 ```typescript
-import * as Layer from "effect/Layer"
-import { CacheServiceLive, PackageFetcherLive } from "effect-type-registry"
-
-const MyAppLayer = Layer.mergeAll(
- CacheServiceLive,
- PackageFetcherLive,
- MyCustomServiceLive,
-)
-
-const program = Effect.gen(function* () {
- const cache = yield* CacheService
- const myService = yield* MyCustomService
-
- // Use services together
-})
-
-await Effect.provide(program, MyAppLayer)
+const vfs = yield* TypeRegistry.getVFS([
+  new PackageSpec({ name: "zod", version: "3.23.8" }),
+  new PackageSpec({ name: "nonexistent", version: "0.0.0" }),
+  new PackageSpec({ name: "@effect/schema", version: "0.79.0" }),
+]);
+// vfs contains zod + @effect/schema files; nonexistent is silently skipped
 ```
 
-### Error Handling
+## Version resolution
 
-Services use typed error channels for robust error handling:
+Resolve semver ranges, tags, and `latest` to specific versions:
 
 ```typescript
-import * as Effect from "effect/Effect"
-import { PackageFetcher } from "effect-type-registry"
+import { TypeRegistry } from "type-registry-effect";
 
-const program = Effect.gen(function* () {
- const fetcher = yield* PackageFetcher
+const version = yield* TypeRegistry.resolveVersion("zod", "latest");
+// => "3.23.8"
 
- const result = yield* fetcher.getPackageJson({
-  name: "nonexistent-package",
-  version: "1.0.0",
- }).pipe(
-  Effect.catchTags({
-   NetworkError: (error) =>
-    Effect.succeed({ fallback: true }),
-   NotFoundError: (error) =>
-    Effect.fail(new Error("Package not found")),
-  }),
- )
-})
+const range = yield* TypeRegistry.resolveVersion("zod", "^3.0.0");
+// => "3.23.8" (highest matching)
 ```
 
-### Service Dependencies
-
-Access underlying services through TypeRegistry:
-
-```typescript
-const registry = TypeRegistry.create()
-
-// TypeRegistry internally uses:
-// - CacheService for disk operations
-// - PackageFetcher for HTTP operations
-// - TypeResolver for import resolution
-```
-
-## Best Practices
-
-1. **Use TypeRegistry for most use cases** - It provides a high-level API
-   that handles service composition
-
-2. **Use PackageFetcher directly** when you need custom HTTP retry logic
-   or want to bypass caching
-
-3. **Use TypeResolver directly** when you're building custom module
-   resolution systems or need to process package.json programmatically
-
-4. **Compose with Effect layers** when building Effect-TS applications
-   that need type registry functionality
-
-5. **Use XDG utilities** to follow cross-platform directory conventions
-
-## Further Reading
-
-- See `docs/architecture/overview.md` for service architecture details
-- See `docs/guides/getting-started.md` for basic usage patterns
-- See `.claude/design/effect-type-registry/observability.md` for
-  observability design
+This calls the jsDelivr API and uses the `semver-effect` library for
+range resolution.
