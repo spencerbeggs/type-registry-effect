@@ -1,10 +1,10 @@
----
-"type-registry-effect": minor
----
+# type-registry-effect
 
-## Features
+## 0.1.0
 
-Initial release of type-registry-effect as a first-class Effect library.
+### Features
+
+* [`97877fe`](https://github.com/spencerbeggs/pnpm-module-template/commit/97877fe11ced82a0fe7bfc621a79e6b1ea3403b0) Initial release of type-registry-effect as a first-class Effect library.
 
 - Platform-agnostic architecture with `FileSystem` and `HttpClient` resolved within layers
 - Three composable Effect services: `CacheService`, `PackageFetcher`, `TypeResolver`
