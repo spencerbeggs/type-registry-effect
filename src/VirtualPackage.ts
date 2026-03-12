@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { VirtualFileSystem } from "./types.js";
+import type { VirtualFileSystem } from "./services/CacheService.js";
 
 /**
  * A virtual npm package that generates a VFS (virtual file system) from
