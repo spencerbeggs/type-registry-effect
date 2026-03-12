@@ -16,7 +16,17 @@ pnpmfileChecksum: sha256-frAR5HNgVgtGTprdTnIzKdO1A6kY+c7Wz5F9JqOsjN8=
 importers:
 
   .:
+    dependencies:
+      semver-effect:
+        specifier: ^0.1.0
+        version: 0.1.0(effect@3.19.19)
     devDependencies:
+      '@effect/platform':
+        specifier: ^0.94.1
+        version: 0.94.5(effect@3.19.19)
+      '@effect/platform-node':
+        specifier: ^0.104.0
+        version: 0.104.1(@effect/cluster@0.56.4(@effect/platform@0.94.5(effect@3.19.19))(@effect/rpc@0.73.2(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/workflow@0.16.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/platform@0.94.5(effect@3.19.19))(@effect/rpc@0.73.2(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(effect@3.19.19))(effect@3.19.19))(@effect/platform@0.94.5(effect@3.19.19))(@effect/rpc@0.73.2(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(@effect/platform@0.94.5(effect@3.19.19))(effect@3.19.19))(effect@3.19.19)
       '@savvy-web/changesets':
         specifier: ^0.4.2
         version: 0.4.2(0c118329066b697e68e825dd8709de22)
@@ -32,6 +42,15 @@ importers:
       '@savvy-web/vitest':
         specifier: ^0.2.1
         version: 0.2.1(@types/node@25.4.0)(@typescript/native-preview@7.0.0-dev.20260311.1)(@vitest/coverage-v8@4.0.18(vitest@4.0.18(@types/node@25.4.0)(jiti@2.6.1)(yaml@2.8.2)))(typescript@5.9.3)(vitest@4.0.18(@types/node@25.4.0)(jiti@2.6.1)(yaml@2.8.2))
+      '@typescript/vfs':
+        specifier: ^1.6.4
+        version: 1.6.4(typescript@5.9.3)
+      effect:
+        specifier: ^3.19.14
+        version: 3.19.19
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
     publishDirectory: dist/dev
 
 packages:
@@ -1365,6 +1384,11 @@ packages:
   '@typescript/native-preview@7.0.0-dev.20260311.1':
     resolution: {integrity: sha512-BnyOW/mdZVZGevyeJ4RRY60CI4F121QBa++8Rwd+/Ms48OKQ30eMhaIKWGowz/u4WjJZmrzhFxIzN92XeSWMCQ==}
     hasBin: true
+
+  '@typescript/vfs@1.6.4':
+    resolution: {integrity: sha512-PJFXFS4ZJKiJ9Qiuix6Dz/OwEIqHD7Dme1UwZhTK11vR+5dqW2ACbdndWQexBzCx+CPuMe5WBYQWCsFyGlQLlQ==}
+    peerDependencies:
+      typescript: '*'
 
   '@vitest/coverage-v8@4.0.18':
     resolution: {integrity: sha512-7i+N2i0+ME+2JFZhfuz7Tg/FqKtilHjGyGvoHYQ6iLV0zahbsJ9sljC9OcFcPDbhYKCet+sG8SsVqlyGvPflZg==}
@@ -2888,6 +2912,11 @@ packages:
 
   secure-keys@1.0.0:
     resolution: {integrity: sha512-nZi59hW3Sl5P3+wOO89eHBAAGwmCPd2aE1+dLZV5MO+ItQctIvAqihzaAXIQhvtH4KJPxM080HsnqltR2y8cWg==}
+
+  semver-effect@0.1.0:
+    resolution: {integrity: sha512-QMV5tYjNaw0rshAg9niTMkqdQrCZ/0js4nskBIzzdEx/LAcHEGPMGQbTlR++YC9JUkSssGjh/YC/JaMRV7JExw==}
+    peerDependencies:
+      effect: ^3.19.19
 
   semver@7.5.4:
     resolution: {integrity: sha512-1bCSESV6Pv+i21Hvpxp3Dx+pSD8lIPt8uVjRrxAUt/nbswYc+tK6Y2btiULjd4+fnq15PX+nqQDC7Oft7WkwcA==}
@@ -4808,6 +4837,13 @@ snapshots:
       '@typescript/native-preview-win32-arm64': 7.0.0-dev.20260311.1
       '@typescript/native-preview-win32-x64': 7.0.0-dev.20260311.1
 
+  '@typescript/vfs@1.6.4(typescript@5.9.3)':
+    dependencies:
+      debug: 4.4.3
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
+
   '@vitest/coverage-v8@4.0.18(vitest@4.0.18(@types/node@25.4.0)(jiti@2.6.1)(yaml@2.8.2))':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
@@ -6555,6 +6591,10 @@ snapshots:
   safer-buffer@2.1.2: {}
 
   secure-keys@1.0.0: {}
+
+  semver-effect@0.1.0(effect@3.19.19):
+    dependencies:
+      effect: 3.19.19
 
   semver@7.5.4:
     dependencies:

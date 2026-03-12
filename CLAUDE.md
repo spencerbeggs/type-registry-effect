@@ -3,12 +3,21 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with
 code in this repository.
 
-## Project Status
+## Project Overview
 
-This is a **base template repository** in initial state. The design
-documentation system (`.claude/` skills and agents) is included but no design
-docs exist yet. To begin planning and documenting architecture decisions, run
-`/design-init` to create your first design document.
+type-registry-effect is an Effect-TS library that fetches, caches, and resolves
+TypeScript type definitions from npm packages via the jsDelivr CDN. It produces
+virtual file systems (VFS) compatible with @typescript/vfs and Twoslash for
+documentation tooling that needs type-aware code samples.
+
+## Design Documentation
+
+- @.claude/design/type-registry-effect/architecture.md — service/layer
+  architecture, GenericTag pattern, platform abstraction
+- @.claude/design/type-registry-effect/cache-optimization.md — disk cache
+  strategy, XDG directories, TTL
+- @.claude/design/type-registry-effect/observability.md — event schema design,
+  logging integration (planned)
 
 ## Commands
 
@@ -17,7 +26,7 @@ docs exist yet. To begin planning and documenting architecture decisions, run
 ```bash
 pnpm run lint              # Check code with Biome
 pnpm run lint:fix          # Auto-fix lint issues
-pnpm run typecheck         # Type-check all workspaces via Turbo
+pnpm run typecheck         # Type-check via Turbo
 pnpm run test              # Run all tests
 pnpm run test:watch        # Run tests in watch mode
 pnpm run test:coverage     # Run tests with coverage report
@@ -26,7 +35,7 @@ pnpm run test:coverage     # Run tests with coverage report
 ### Building
 
 ```bash
-pnpm run build             # Build all packages (dev + prod)
+pnpm run build             # Build all outputs (dev + prod)
 pnpm run build:dev         # Build development output only
 pnpm run build:prod        # Build production/npm output only
 ```
@@ -34,39 +43,60 @@ pnpm run build:prod        # Build production/npm output only
 ### Running a Single Test
 
 ```bash
-# Run tests for a specific package
-pnpm run test -- --filter=@spencerbeggs/ecma-module
-
 # Run a specific test file
-pnpm vitest run pkgs/ecma-module/src/index.test.ts
+pnpm vitest run __test__/TypeRegistry.unit.test.ts
+
+# Run integration tests only
+pnpm vitest run __test__/TypeRegistry.integration.test.ts
 ```
 
 ## Architecture
 
-### Monorepo Structure
+### Single-Package Library
 
-- **Package Manager**: pnpm with workspaces
-- **Build Orchestration**: Turbo for caching and task dependencies
-- **Packages**: Located in `pkgs/` directory
-- **Shared Configs**: Located in `lib/configs/`
+- **Source**: `src/` — all library code
+- **Tests**: `__test__/` — mirrors `src/` structure
+- **Build**: Rslib with dual output (`dist/dev/`, `dist/npm/`)
+- **Shared Configs**: `lib/configs/` (Biome, commitlint, lint-staged, etc.)
 
-### Package Build Pipeline
+### Key Modules
 
-Each package uses Rslib with dual output:
+- `src/TypeRegistry.ts` — namespace module with composable Effect programs
+- `src/VirtualPackage.ts` — synthetic type packages from local declarations
+- `src/services/` — service interfaces (`CacheService`, `PackageFetcher`,
+  `TypeResolver`) using `Context.GenericTag` with interface/const merging
+- `src/layers/` — live implementations (`CacheServiceLive`,
+  `PackageFetcherLive`, `TypeResolverLive`, `TypeRegistryLive`)
+- `src/schemas/` — Effect Schema types (`PackageSpec`, `CacheMetadata`,
+  `PackageJson`, `FileTree`, `ResolvedModule`)
+- `src/errors/` — `Data.TaggedError` types with `*Base` exports for DTS
+  bundling
+- `src/platforms/node.ts` — `NodeLayer` and Promise convenience wrappers
 
-1. `dist/dev/` - Development build with source maps
-2. `dist/npm/` - Production build for npm publishing
+### Entry Points
 
-Turbo tasks define dependencies: `typecheck` depends on `build` completing first.
+- `type-registry-effect` (`src/index.ts`) — platform-agnostic Effect programs
+- `type-registry-effect/node` (`src/node.ts`) — Node.js layer + Promise API
+
+### Patterns
+
+- Services use `Context.GenericTag` with interface/const declaration merging
+  (not `Context.Tag` class) to avoid `_base` forgotten exports in DTS bundling
+- `CacheMetadata` uses `Schema.Struct` with manual interface (not
+  `Schema.Class`) for the same reason
+- Error types use `Data.TaggedError` with exported `*Base` constants
+- Platform deps (`FileSystem`, `HttpClient`) resolved within layers, not in
+  service interfaces
+- `JSON.parse` calls wrapped with `Effect.try` for typed `ParseError`
 
 ### Code Quality
 
-- **Biome**: Unified linting and formatting (replaces ESLint + Prettier)
+- **Biome**: Unified linting and formatting
 - **Commitlint**: Enforces conventional commits with DCO signoff
 - **Husky Hooks**:
   - `pre-commit`: Runs lint-staged
   - `commit-msg`: Validates commit message format
-  - `pre-push`: Runs tests for affected packages
+  - `pre-push`: Runs tests for affected files
 
 ### TypeScript Configuration
 
@@ -79,8 +109,8 @@ Turbo tasks define dependencies: `typecheck` depends on `build` completing first
 
 - **Framework**: Vitest with v8 coverage
 - **Pool**: Uses forks (not threads) for Effect-TS compatibility
-- **Config**: `vitest.config.ts` supports project-based filtering via
-  `--project` flag
+- **Config**: `vitest.config.ts` with coverage thresholds (80% lines/statements,
+  70% functions, 60% branches)
 
 ## Conventions
 

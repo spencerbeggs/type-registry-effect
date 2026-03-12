@@ -1,0 +1,241 @@
+/**
+ * Integration tests for TypeRegistry
+ */
+
+import { homedir } from "node:os";
+import * as Path from "node:path";
+import { describe, expect, it } from "vitest";
+import { TypeRegistry } from "./TypeRegistry.js";
+import type { PackageSpec } from "./types.js";
+
+describe("TypeRegistry Integration", () => {
+	const testCacheDir = Path.join(homedir(), ".cache", "rspress-type-registry-test");
+
+	describe("fetchAndCache", () => {
+		it("should fetch and cache a package", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Fetch and cache
+			await registry.fetchAndCache(pkg);
+
+			// Verify it's now cached
+			const isCached = await registry.hasCached(pkg);
+			expect(isCached).toBe(true);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+
+		it("should skip re-fetching if cache is fresh", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+				ttl: 24 * 60 * 60 * 1000, // 24 hours
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// First fetch
+			await registry.fetchAndCache(pkg);
+
+			// Second fetch should skip (cached)
+			const startTime = Date.now();
+			await registry.fetchAndCache(pkg);
+			const elapsed = Date.now() - startTime;
+
+			// Should be very fast since it skipped fetching
+			expect(elapsed).toBeLessThan(100);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+	});
+
+	describe("ensureCached", () => {
+		it("should fetch if not cached", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Ensure package is not cached
+			const wasActive = await registry.hasCached(pkg);
+			if (wasActive) {
+				await registry.clearCache(pkg);
+			}
+
+			// Ensure cached
+			await registry.ensureCached(pkg);
+
+			// Verify it's now cached
+			const isCached = await registry.hasCached(pkg);
+			expect(isCached).toBe(true);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+	});
+
+	describe("getPackageVFS", () => {
+		it("should get VFS for a cached package", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Fetch and cache
+			await registry.fetchAndCache(pkg);
+
+			// Get VFS
+			const vfs = await registry.getPackageVFS(pkg, { autoFetch: false });
+
+			expect(vfs).toBeInstanceOf(Map);
+			expect(vfs.size).toBeGreaterThan(0);
+
+			// Should have type definition files
+			const paths = Array.from(vfs.keys());
+			const hasTypeFiles = paths.some((path) => path.endsWith(".d.ts"));
+			expect(hasTypeFiles).toBe(true);
+
+			// Should have package.json
+			const hasPackageJson = paths.some((path) => path.includes("package.json"));
+			expect(hasPackageJson).toBe(true);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+
+		it("should auto-fetch if not cached", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Ensure not cached
+			const wasActive = await registry.hasCached(pkg);
+			if (wasActive) {
+				await registry.clearCache(pkg);
+			}
+
+			// Get VFS with auto-fetch
+			const vfs = await registry.getPackageVFS(pkg, { autoFetch: true });
+
+			expect(vfs).toBeInstanceOf(Map);
+			expect(vfs.size).toBeGreaterThan(0);
+
+			// Verify it's now cached
+			const isCached = await registry.hasCached(pkg);
+			expect(isCached).toBe(true);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+	});
+
+	describe("getVFS", () => {
+		it("should get combined VFS for multiple packages", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const packages: PackageSpec[] = [
+				{ name: "zod", version: "3.22.4" },
+				// Using a smaller package for faster test
+			];
+
+			// Get VFS for all packages
+			const vfs = await registry.getVFS(packages, { autoFetch: true });
+
+			expect(vfs).toBeInstanceOf(Map);
+			expect(vfs.size).toBeGreaterThan(0);
+
+			// Should have files from zod
+			const paths = Array.from(vfs.keys());
+			const hasZodFiles = paths.some((path) => path.includes("node_modules/zod"));
+			expect(hasZodFiles).toBe(true);
+
+			// Clean up
+			for (const pkg of packages) {
+				await registry.clearCache(pkg);
+			}
+		}, 45000);
+	});
+
+	describe("resolveImport", () => {
+		it("should resolve import specifier", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Ensure cached
+			await registry.ensureCached(pkg);
+
+			// Resolve import
+			const resolved = await registry.resolveImport(pkg, ".");
+
+			expect(resolved).toHaveProperty("filePath");
+			expect(resolved).toHaveProperty("isTypeDefinition");
+			expect(resolved.isTypeDefinition).toBe(true);
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+	});
+
+	describe("getTypeEntries", () => {
+		it("should get all type entry points", async () => {
+			const registry = TypeRegistry.create({
+				cacheDir: testCacheDir,
+			});
+
+			const pkg: PackageSpec = {
+				name: "zod",
+				version: "3.22.4",
+			};
+
+			// Ensure cached
+			await registry.ensureCached(pkg);
+
+			// Get type entries
+			const entries = await registry.getTypeEntries(pkg);
+
+			expect(entries).toBeInstanceOf(Array);
+			expect(entries.length).toBeGreaterThan(0);
+
+			// Each entry should have filePath and isTypeDefinition
+			for (const entry of entries) {
+				expect(entry).toHaveProperty("filePath");
+				expect(entry).toHaveProperty("isTypeDefinition");
+			}
+
+			// Clean up
+			await registry.clearCache(pkg);
+		}, 30000);
+	});
+});
