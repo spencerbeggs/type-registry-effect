@@ -131,7 +131,7 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 							const content = yield* fs
 								.readFileString(fullPath)
 								.pipe(Effect.mapError(mapToCacheError("read", fullPath)));
-							const vfsPath = Path.join("node_modules", pkg.name, file);
+							const vfsPath = `node_modules/${pkg.name}/${file.replace(/\\/g, "/")}`;
 							vfs.set(vfsPath, content);
 						}
 						return vfs;

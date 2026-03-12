@@ -195,7 +195,7 @@ export class VirtualPackage {
 		} else {
 			pkg.exports = {};
 			for (const [fileName] of this.entries) {
-				const baseName = fileName.replace(/\.d\.ts$/, "");
+				const baseName = fileName.replace(/\.d\.(m|c)?ts$/, "");
 				const key = baseName === "index" ? "." : `./${baseName}`;
 				pkg.exports[key] = { types: `./${fileName}` };
 			}
