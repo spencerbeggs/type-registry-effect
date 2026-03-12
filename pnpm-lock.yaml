@@ -41,6 +41,9 @@ importers:
       effect:
         specifier: ^3.19.14
         version: 3.19.19
+      semver-effect:
+        specifier: ^0.1.0
+        version: 0.1.0(effect@3.19.19)
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -2930,6 +2933,11 @@ packages:
 
   secure-keys@1.0.0:
     resolution: {integrity: sha512-nZi59hW3Sl5P3+wOO89eHBAAGwmCPd2aE1+dLZV5MO+ItQctIvAqihzaAXIQhvtH4KJPxM080HsnqltR2y8cWg==}
+
+  semver-effect@0.1.0:
+    resolution: {integrity: sha512-QMV5tYjNaw0rshAg9niTMkqdQrCZ/0js4nskBIzzdEx/LAcHEGPMGQbTlR++YC9JUkSssGjh/YC/JaMRV7JExw==}
+    peerDependencies:
+      effect: ^3.19.19
 
   semver@7.5.4:
     resolution: {integrity: sha512-1bCSESV6Pv+i21Hvpxp3Dx+pSD8lIPt8uVjRrxAUt/nbswYc+tK6Y2btiULjd4+fnq15PX+nqQDC7Oft7WkwcA==}
@@ -6604,6 +6612,10 @@ snapshots:
   safer-buffer@2.1.2: {}
 
   secure-keys@1.0.0: {}
+
+  semver-effect@0.1.0(effect@3.19.19):
+    dependencies:
+      effect: 3.19.19
 
   semver@7.5.4:
     dependencies:

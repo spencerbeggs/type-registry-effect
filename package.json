@@ -4,12 +4,12 @@
 	"private": true,
 	"description": "A template repository for developing and deploying Node.js modules from a pnpm monorepo structure.",
 	"homepage": "https://github.com/spencerbeggs/type-registry-effect#readme",
+	"bugs": {
+		"url": "https://github.com/spencerbeggs/type-registry-effect/issues"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/spencerbeggs/type-registry-effect.git"
-	},
-	"bugs": {
-		"url": "https://github.com/spencerbeggs/type-registry-effect/issues"
 	},
 	"license": "MIT",
 	"author": {
@@ -52,17 +52,18 @@
 		"@effect/sql": "^0.49.0",
 		"@effect/workflow": "^0.16.0",
 		"effect": "^3.19.14",
+		"semver-effect": "^0.1.0",
 		"typescript": "^5.7.3",
 		"undici": "^7.18.2",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
-		"@typescript/vfs": "^1.6.4",
 		"@savvy-web/changesets": "^0.4.2",
 		"@savvy-web/commitlint": "^0.4.0",
 		"@savvy-web/lint-staged": "^0.5.1",
 		"@savvy-web/rslib-builder": "^0.17.0",
-		"@savvy-web/vitest": "^0.2.1"
+		"@savvy-web/vitest": "^0.2.1",
+		"@typescript/vfs": "^1.6.4"
 	},
 	"packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be",
 	"devEngines": {
