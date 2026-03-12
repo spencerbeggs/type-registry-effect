@@ -3,10 +3,12 @@ status: current
 module: type-registry-effect
 category: observability
 created: 2026-01-17
-updated: 2026-01-18
-last-synced: 2026-01-18
+updated: 2026-03-11
+last-synced: 2026-03-11
 completeness: 90
-related: []
+related:
+  - ./architecture.md
+  - ./cache-optimization.md
 dependencies: []
 ---
 
@@ -31,13 +33,14 @@ can format them however they need.
 
 ### Event Schema Definition
 
-All events are defined as a discriminated union validated by Effect Schema:
+All events are defined as a discriminated union validated by Effect Schema.
+`LogEventSchema` is a `Schema.Union(...)` value (not a `Schema.Class`):
 
 ```typescript
 // src/events.ts
 import * as Schema from "effect/Schema";
 
-export class LogEventSchema extends Schema.Union(
+export const LogEventSchema = Schema.Union(
   // Package version resolved
   Schema.Struct({
     event: Schema.Literal("package.version.resolved"),
@@ -64,20 +67,8 @@ export class LogEventSchema extends Schema.Union(
       ageMinutes: Schema.Number,
     }),
   }),
-  // Cache miss
-  Schema.Struct({
-    event: Schema.Literal("cache.miss"),
-    level: Schema.Literal("debug"),
-    message: Schema.String,
-    timestamp: Schema.Number,
-    fiber: Schema.optional(Schema.String),
-    data: Schema.Struct({
-      package: Schema.String,
-      version: Schema.String,
-    }),
-  }),
-  // ... (9 total event types)
-) {}
+  // ... (10 total event types)
+);
 
 export type LogEvent = Schema.Schema.Type<typeof LogEventSchema>;
 export type LogEventHandler = (event: LogEvent) => void;
@@ -94,62 +85,26 @@ export type LogEventHandler = (event: LogEvent) => void;
 7. `package.load.failed` - Package failed to load
 8. `packages.batch.start` - Batch fetch started
 9. `packages.batch.complete` - Batch fetch completed
+10. `typescript.cache.created` - TypeScript in-memory cache created from VFS data
 
-### TypeRegistry Configuration
+### Event Creation
 
-Consumers provide an optional callback to receive events:
+Events are created using the `createLogEvent` helper, which decodes unknown
+data through `LogEventSchema` synchronously:
 
 ```typescript
-// src/types.ts
-export interface TypeRegistryOptions {
-  /** Cache directory path */
-  cacheDir?: string;
-
-  /** Cache TTL in milliseconds */
-  ttl?: number;
-
-  /** Optional callback for receiving structured log events */
-  onLogEvent?: (event: LogEvent) => void;
+// src/events.ts
+export function createLogEvent(event: unknown): LogEvent {
+  return Schema.decodeUnknownSync(LogEventSchema)(event);
 }
 ```
 
-**Example usage:**
+### Integration Status
 
-```typescript
-const registry = TypeRegistry.create({
-  cacheDir: "/path/to/cache",
-  ttl: 7 * 24 * 60 * 60 * 1000, // 7 days
-  onLogEvent: (event) => {
-    console.log(JSON.stringify(event)); // Raw JSON output
-  },
-});
-```
-
-### Event Emission
-
-`TypeRegistry` emits events at key lifecycle points:
-
-```typescript
-// src/TypeRegistry.ts
-private emitEvent(event: LogEvent): void {
-  if (this.options.onLogEvent) {
-    this.options.onLogEvent(event);
-  }
-}
-
-// Example: Cache hit event
-this.emitEvent({
-  event: "cache.hit",
-  level: "info",
-  message: `Cache hit for ${pkg.name}@${pkg.version}`,
-  timestamp: Date.now(),
-  data: {
-    package: pkg.name,
-    version: pkg.version,
-    ageMinutes: ageInMinutes,
-  },
-});
-```
+The `events.ts` module defines Schema-validated log events and the
+`createLogEvent` factory, but these are **not yet wired into** the
+`TypeRegistry` namespace operations. The event infrastructure is exported for
+consumers to use in their own integrations.
 
 **Services remain logging-free.** All `Effect.log*` calls have been removed from:
 
@@ -159,10 +114,16 @@ this.emitEvent({
 
 This keeps business logic clean and testable.
 
-### Three-Mode Event Handler
+Note: The `TypeRegistry` module is a **namespace of composable Effect programs**
+(not a class). There is no `TypeRegistry.create()` or instance-based
+configuration. Event handling integration is planned as a future layer-based
+composition pattern.
 
-The `rspress-plugin-api-extractor` demonstrates a smart event handler with
-three modes:
+### Three-Mode Event Handler (External Consumer Example)
+
+The following shows how an external consumer (`rspress-plugin-api-extractor`)
+could implement a smart event handler with three modes. This is aspirational
+documentation -- the event system is not yet wired into TypeRegistry operations.
 
 **INFO Mode (default):**
 
@@ -563,43 +524,30 @@ sdk.start()
 
 ## 8. Error Categorization
 
+All error types use `Data.TaggedError` with `*Base` export constants for
+stable DTS references (see architecture.md for full details):
+
 ```typescript
-// Define error types for better observability
-export class NetworkError extends Data.TaggedError("NetworkError")<{
-  url: string
-  statusCode?: number
-  cause: unknown
+// src/errors/NetworkError.ts
+export const NetworkErrorBase = Data.TaggedError("NetworkError");
+export class NetworkError extends NetworkErrorBase<{
+  readonly url: string;
+  readonly status?: number;
+  readonly message: string;
 }> {}
 
-export class CacheError extends Data.TaggedError("CacheError")<{
-  operation: "read" | "write" | "delete"
-  path: string
-  cause: unknown
+// src/errors/CacheError.ts
+export const CacheErrorBase = Data.TaggedError("CacheError");
+export class CacheError extends CacheErrorBase<{
+  readonly operation: "read" | "write" | "delete" | "list";
+  readonly path: string;
+  readonly message: string;
 }> {}
-
-export class ResolutionError extends Data.TaggedError("ResolutionError")<{
-  package: string
-  specifier: string
-  cause: unknown
-}> {}
-
-// Track error rates by type
-yield* Effect.catchTags({
-  NetworkError: (error) => {
-    yield* Metric.increment("network_errors_total", {
-      url: error.url,
-      status: error.statusCode
-    })
-    return Effect.fail(error)
-  },
-  CacheError: (error) => {
-    yield* Metric.increment("cache_errors_total", {
-      operation: error.operation
-    })
-    return Effect.fail(error)
-  }
-})
 ```
+
+Note: Errors use `message: string` (not `cause: unknown`) and `CacheError`
+includes `"list"` as an operation type. `NetworkError` uses `status?: number`
+(not `statusCode`).
 
 ## Current Implementation
 
@@ -648,11 +596,9 @@ features:
 
 ## Related Documentation
 
-- **Type Loading & VFS:**
-  `.claude/design/rspress-plugin-api-extractor/type-loading-vfs.md` -
-  Integration with RSPress plugin
-- **Main Package README:** `pkgs/effect-type-registry/README.md`
-- **Package CLAUDE.md:** `pkgs/effect-type-registry/CLAUDE.md`
+- **Architecture:** `./architecture.md` -- service patterns, data layer, public API
+- **Cache Optimization:** `./cache-optimization.md` -- performance characteristics
+- **Main Package README:** `README.md`
 
 ### External Resources
 

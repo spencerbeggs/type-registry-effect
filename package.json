@@ -2,7 +2,7 @@
 	"name": "type-registry-effect",
 	"version": "0.0.0",
 	"private": true,
-	"description": "A template repository for developing and deploying Node.js modules from a pnpm monorepo structure.",
+	"description": "Fetch, cache, and resolve TypeScript type definitions from npm packages for use with Twoslash and documentation tooling. Built on Effect.",
 	"homepage": "https://github.com/spencerbeggs/type-registry-effect#readme",
 	"bugs": {
 		"url": "https://github.com/spencerbeggs/type-registry-effect/issues"

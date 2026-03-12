@@ -3,10 +3,12 @@ status: stub
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-01-18
-last-synced: 2026-01-18
+updated: 2026-03-11
+last-synced: 2026-03-11
 completeness: 0
-related: []
+related:
+  - ./architecture.md
+  - ./observability.md
 dependencies: []
 ---
 
@@ -430,13 +432,8 @@ node --prof-process isolate-*.log
 
 **Package Documentation:**
 
-- `pkgs/effect-type-registry/README.md` - Package overview
-- `pkgs/effect-type-registry/CLAUDE.md` - Development guide
-
-**External Resources:**
-
-- [Performance Best Practices](url) - General guidance
-- [Profiling Guide](url) - How to profile
+- `README.md` - Package overview
+- `CLAUDE.md` - Development guide
 
 ---
 

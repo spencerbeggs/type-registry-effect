@@ -62,13 +62,14 @@ Each cached package has a `.metadata.json` file described by the
 `CacheMetadata` schema:
 
 ```typescript
-import { CacheMetadata } from "type-registry-effect";
+import type { CacheMetadata } from "type-registry-effect";
 
-const metadata = new CacheMetadata({
+// CacheMetadata is a Schema.Struct, not a class — use plain object literals
+const metadata: CacheMetadata = {
   cachedAt: Date.now(),   // Unix timestamp when cached
   version: "3.23.8",      // Resolved version string
   ttl: 604_800_000,       // Optional TTL in milliseconds (default: 7 days)
-});
+};
 ```
 
 ## TTL (time-to-live)
@@ -89,7 +90,7 @@ yield* TypeRegistry.fetchAndCache(
 The Promise convenience API accepts the same option:
 
 ```typescript
-import { fetchAndCache } from "effect-type-registry/node";
+import { fetchAndCache } from "type-registry-effect/node";
 import { PackageSpec } from "type-registry-effect";
 
 await fetchAndCache(

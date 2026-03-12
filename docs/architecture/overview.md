@@ -15,7 +15,7 @@ This document explains the service and layer architecture of type-registry-effec
 
 type-registry-effect is built on Effect's service pattern. Instead of a class with methods, the library exposes:
 
-- **Services** -- interfaces defined as `Context.Tag` classes that describe what operations are available
+- **Services** -- interfaces defined with `Context.GenericTag` and interface/const declaration merging that describe what operations are available
 - **Layers** -- implementations of those services that can be swapped at composition time
 - **Programs** -- functions in the `TypeRegistry` namespace that use services from the Effect context
 
@@ -168,7 +168,7 @@ hasCached(pkg: PackageSpec): Effect<boolean, CacheError, CacheService>
 fetchAndCache(pkg: PackageSpec): Effect<void, NetworkError | ParseError | CacheError, CacheService | PackageFetcher>
 
 // resolveImport needs CacheService AND TypeResolver
-resolveImport(pkg: PackageSpec, specifier: string): Effect<ResolvedModule, CacheError | ResolutionError, CacheService | TypeResolver>
+resolveImport(pkg: PackageSpec, specifier: string): Effect<ResolvedModule, CacheError | ParseError | ResolutionError, CacheService | TypeResolver>
 ```
 
 If you try to run a program without providing the required services, TypeScript produces a compile error:

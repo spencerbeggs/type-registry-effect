@@ -46,6 +46,7 @@ export { type NetworkError, NetworkErrorBase } from "./errors/NetworkError.js";
 export { type PackageNotFoundError, PackageNotFoundErrorBase } from "./errors/PackageNotFoundError.js";
 export { type ParseError, ParseErrorBase } from "./errors/ParseError.js";
 export { type ResolutionError, ResolutionErrorBase } from "./errors/ResolutionError.js";
+export { type TimeoutError, TimeoutErrorBase } from "./errors/TimeoutError.js";
 export {
 	NodeLayer,
 	createTypeScriptCache,

@@ -1,11 +1,11 @@
 ---
-status: draft
+status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
 updated: 2026-03-11
 last-synced: 2026-03-11
-completeness: 65
+completeness: 90
 related:
   - ./observability.md
   - ./cache-optimization.md
@@ -54,10 +54,13 @@ implementations, keeping service interfaces platform-agnostic.
    `catchTag`-based recovery
 4. **Schema-validated data** -- runtime validation at system boundaries
    (CDN responses, cache reads) via Effect Schema
-5. **Composable services** -- `Context.Tag`-based services with proper
-   `Layer` implementations for dependency injection
-6. **`*Shape` interface convention** -- service shapes are named
-   `CacheServiceShape`, `PackageFetcherShape`, `TypeResolverShape`
+5. **Composable services** -- `Context.GenericTag` with interface/const
+   declaration merging for dependency injection (avoids DTS `_base` issues
+   that occur with the `Context.Tag` class pattern)
+6. **Interface/const declaration merging** -- each service uses a single name
+   (`CacheService`, `PackageFetcher`, `TypeResolver`) for both the TypeScript
+   interface and the `Context.GenericTag` constant, eliminating the need for
+   separate `*Shape` interfaces
 7. **`*Base` exports for DTS bundling** -- error and data class base values
    are exported for api-extractor compatibility
 
@@ -81,16 +84,19 @@ composable Effect programs.
 
 ### What Has Been Completed
 
-- Data layer: `Data.TaggedClass` and `Schema.Class` types in `src/schemas/`
+- Data layer: `Data.TaggedClass` types in `src/schemas/` (`PackageSpec`,
+  `ResolvedModule`); `Schema.Struct` with manual interface for `CacheMetadata`
 - Error layer: `Data.TaggedError` types with `*Base` exports in `src/errors/`
-- Service interfaces with `Context.Tag` class pattern and `*Shape` naming
+- Service interfaces using `Context.GenericTag` with interface/const
+  declaration merging (NOT `Context.Tag` class pattern, NOT `*Shape` naming)
 - Layer implementations: `CacheServiceLive`, `PackageFetcherLive`,
   `TypeResolverLive`
 - Composed `TypeRegistryLive` layer
 - `TypeRegistry` namespace module with composable Effect programs
-- Node.js platform layer with Promise convenience API
+- Node.js platform layer (`type-registry-effect/node`) with `NodeLayer`
+  (fully closed) and Promise-returning wrappers
 - `VirtualPackage` utility class for transient VFS generation
-- Structured log event system using Effect Schema
+- Structured log event system using Effect Schema (10 event types)
 - Comprehensive test suite (unit, integration, schema, layer tests)
 
 ### What Is Not Yet Implemented
@@ -132,7 +138,8 @@ via `Effect.gen`, keeping the interface contracts clean.
 ### Phase 1: Data & Errors -- COMPLETE
 
 - `src/schemas/PackageSpec.ts` -- `Data.TaggedClass` with structural equality
-- `src/schemas/CacheMetadata.ts` -- `Schema.Class` for cache serialization
+- `src/schemas/CacheMetadata.ts` -- `Schema.Struct` with manually defined
+  `interface CacheMetadata` (NOT `Schema.Class`, to avoid DTS bundling issues)
 - `src/schemas/PackageJson.ts` -- `Schema.Struct` for validated CDN parsing
 - `src/schemas/FileTree.ts` -- `Schema.Struct` for jsDelivr file tree response
 - `src/schemas/ResolvedModule.ts` -- `Data.TaggedClass` for resolution results
@@ -140,7 +147,10 @@ via `Effect.gen`, keeping the interface contracts clean.
 
 ### Phase 2: Service Refactoring -- COMPLETE
 
-- Services converted to `Context.Tag` class pattern with `*Shape` interfaces
+- Services use `Context.GenericTag` with interface/const declaration merging
+  (e.g. `interface CacheService { ... }` + `const CacheService = Context.GenericTag<CacheService>(...)`)
+  -- NOT the `Context.Tag` class pattern, to eliminate `_base` forgotten
+  exports in DTS bundling
 - `PackageFetcherLive` and `TypeResolverLive` are proper `Layer` values
 - Schema validation applied to CDN response parsing
 - `FileSystem` and `HttpClient` resolved within layers, not in interfaces
@@ -213,19 +223,25 @@ export class PackageSpec extends PackageSpecBase<{
 
 ### CacheMetadata
 
-Schema.Class for serialization to/from cache storage. Validated on read.
+`Schema.Struct` with a manually defined `interface` for serialization to/from
+cache storage. Uses interface/const declaration merging (same pattern as
+services) rather than `Schema.Class` to avoid DTS bundling issues.
 
 ```typescript
 // src/schemas/CacheMetadata.ts
 import { Schema } from "effect";
 
-export class CacheMetadata extends Schema.Class<CacheMetadata>(
-  "CacheMetadata"
-)({
+export interface CacheMetadata {
+  readonly version: string;
+  readonly cachedAt: number;
+  readonly ttl?: number | undefined;
+}
+
+export const CacheMetadata: Schema.Schema<CacheMetadata> = Schema.Struct({
   version: Schema.String,
   cachedAt: Schema.Number,
   ttl: Schema.optional(Schema.Number),
-}) {}
+});
 ```
 
 ### PackageJson
@@ -427,11 +443,14 @@ TypeRegistry.TypeRegistry.fetchAndCache(pkg).pipe(
 
 ## Service Layer
 
-Services use the `Context.Tag` class pattern. Each service defines a `*Shape`
-interface for its methods and a class extending `Context.Tag` for dependency
-injection. Method signatures return `Effect<A, E>` with typed errors -- no
-`HttpClient` or `FileSystem` in method signatures since those are resolved
-within layers.
+Services use `Context.GenericTag` with **interface/const declaration merging**.
+Each service file defines an `interface` with the service methods and a `const`
+of the same name created via `Context.GenericTag<Interface>(identifier)`. This
+pattern was chosen over the `Context.Tag` class pattern to eliminate `_base`
+forgotten exports in DTS bundling. There are no separate `*Shape` interfaces.
+
+Method signatures return `Effect<A, E>` with typed errors -- no `HttpClient` or
+`FileSystem` in method signatures since those are resolved within layers.
 
 ### CacheService
 
@@ -442,7 +461,7 @@ import { Context } from "effect";
 
 export type VirtualFileSystem = Map<string, string>;
 
-export interface CacheServiceShape {
+export interface CacheService {
   readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, CacheError>;
   readonly read: (
     pkg: PackageSpec,
@@ -469,9 +488,9 @@ export interface CacheServiceShape {
   readonly remove: (pkg: PackageSpec) => Effect.Effect<void, CacheError>;
 }
 
-export class CacheService extends Context.Tag(
+export const CacheService = Context.GenericTag<CacheService>(
   "type-registry-effect/CacheService"
-)<CacheService, CacheServiceShape>() {}
+);
 ```
 
 ### PackageFetcher
@@ -483,7 +502,7 @@ export interface PackageMetadata {
   readonly tags: Record<string, string>;
 }
 
-export interface PackageFetcherShape {
+export interface PackageFetcher {
   readonly getVersions: (
     name: string,
   ) => Effect.Effect<PackageMetadata, NetworkError | ParseError>;
@@ -506,9 +525,9 @@ export interface PackageFetcherShape {
   ) => Effect.Effect<Map<string, string>, NetworkError | ParseError>;
 }
 
-export class PackageFetcher extends Context.Tag(
+export const PackageFetcher = Context.GenericTag<PackageFetcher>(
   "type-registry-effect/PackageFetcher"
-)<PackageFetcher, PackageFetcherShape>() {}
+);
 ```
 
 The `PackageFetcher` module also exports constants (`JSDELIVR_DATA_API`,
@@ -519,7 +538,7 @@ The `PackageFetcher` module also exports constants (`JSDELIVR_DATA_API`,
 
 ```typescript
 // src/services/TypeResolver.ts
-export interface TypeResolverShape {
+export interface TypeResolver {
   readonly resolveImport: (
     specifier: string,
     packageJson: PackageJson,
@@ -543,13 +562,12 @@ export interface TypeResolverShape {
   ) => Effect.Effect<ResolvedModule | null, ResolutionError>;
 }
 
-export class TypeResolver extends Context.Tag(
+export const TypeResolver = Context.GenericTag<TypeResolver>(
   "type-registry-effect/TypeResolver"
-)<TypeResolver, TypeResolverShape>() {}
+);
 ```
 
-Note: `TypeResolverShape` includes a `findTypeDefinition` method not present
-in the original design. This maps JS file paths to their corresponding `.d.ts`
+Note: `findTypeDefinition` maps JS file paths to their corresponding `.d.ts`
 counterparts.
 
 ---
@@ -562,6 +580,10 @@ Node.js filesystem-based cache using `@effect/platform` FileSystem with
 XDG-compliant paths. Provides a `makeNodeCacheLayer` factory for custom base
 directories.
 
+A shared `listRecursive` helper is extracted within the layer closure and
+reused by `listFiles`, `getVFS`, and other internal operations that need
+recursive directory traversal.
+
 ```typescript
 // src/layers/CacheServiceLive.ts
 export const makeNodeCacheLayer = (
@@ -570,7 +592,12 @@ export const makeNodeCacheLayer = (
   Layer.effect(CacheService, Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const cacheDir = baseDir ?? getDefaultCacheDir();
-    return { /* CacheServiceShape implementation */ };
+
+    // Shared recursive directory listing helper
+    const listRecursive = (dir: string, relativeTo: string):
+      Effect.Effect<string[], CacheError, never> => /* ... */;
+
+    return { /* CacheService implementation */ };
   }));
 
 export const CacheServiceLive: Layer.Layer<
@@ -584,14 +611,25 @@ Uses `@effect/platform` HttpClient with Schema validation, retry schedules,
 and timeout. The HttpClient dependency is resolved within the layer via
 `Effect.gen`.
 
+A shared `getFileTree` helper is extracted within the layer closure and reused
+by the `getFileTree` service method and `getTypeFiles` (which delegates to it
+to obtain the file listing before filtering for type definitions).
+
+`JSON.parse` calls are wrapped with `Effect.try` to produce typed `ParseError`
+values rather than throwing untyped exceptions.
+
 ```typescript
 // src/layers/PackageFetcherLive.ts
 export const PackageFetcherLive: Layer.Layer<
   PackageFetcher, never, HttpClient.HttpClient
 > = Layer.effect(PackageFetcher, Effect.gen(function* () {
   const http = yield* HttpClient.HttpClient;
-  // ... fetchJson/fetchText helpers with retry + timeout
-  return { /* PackageFetcherShape implementation */ };
+  // fetchJson/fetchText helpers with retry + timeout
+
+  // Shared helper reused by getFileTree and getTypeFiles
+  const getFileTree = (pkg: PackageSpec) => /* ... */;
+
+  return { /* PackageFetcher implementation */ };
 }));
 ```
 
@@ -599,8 +637,18 @@ export const PackageFetcherLive: Layer.Layer<
 
 Pure layer with no platform dependencies. Uses `Layer.succeed` directly.
 
+The `isTypeDefinition` helper uses `String.prototype.endsWith` checks
+(`.d.ts`, `.d.mts`, `.d.cts`) rather than `Path.extname` to correctly handle
+multi-segment extensions.
+
 ```typescript
 // src/layers/TypeResolverLive.ts
+function isTypeDefinition(filePath: string): boolean {
+  return filePath.endsWith(".d.ts")
+    || filePath.endsWith(".d.mts")
+    || filePath.endsWith(".d.cts");
+}
+
 export const TypeResolverLive: Layer.Layer<TypeResolver> =
   Layer.succeed(TypeResolver, {
     resolveImport: (specifier, packageJson, pkg) => /* ... */,
@@ -675,27 +723,30 @@ The main export (`src/index.ts`) exposes:
 export * as TypeRegistry from "./TypeRegistry.js";
 export * as VirtualPackage from "./VirtualPackage.js";
 
-// Schemas
+// Schemas (with *Base exports for DTS bundling)
 export { CacheMetadata } from "./schemas/CacheMetadata.js";
 export { FileTreeEntry, FileTreeResponse } from "./schemas/FileTree.js";
 export { PackageJson } from "./schemas/PackageJson.js";
-export { PackageSpec } from "./schemas/PackageSpec.js";
-export { ResolvedModule } from "./schemas/ResolvedModule.js";
+export { PackageSpec, PackageSpecBase } from "./schemas/PackageSpec.js";
+export { ResolvedModule, ResolvedModuleBase } from "./schemas/ResolvedModule.js";
 
-// Errors (with *Base for DTS bundling via errors/index.ts barrel)
+// Errors (with *Base exports for DTS bundling)
 export type { TypeRegistryError } from "./errors/index.js";
 export {
-  CacheError, NetworkError, PackageNotFoundError,
-  ParseError, ResolutionError, TimeoutError,
+  CacheError, CacheErrorBase,
+  NetworkError, NetworkErrorBase,
+  PackageNotFoundError, PackageNotFoundErrorBase,
+  ParseError, ParseErrorBase,
+  ResolutionError, ResolutionErrorBase,
+  TimeoutError, TimeoutErrorBase,
 } from "./errors/index.js";
 
-// Services (Context.Tag definitions + Shape types)
-export { CacheService, type CacheServiceShape, type VirtualFileSystem }
+// Services (Context.GenericTag constants + VirtualFileSystem/PackageMetadata types)
+export { CacheService, type VirtualFileSystem }
   from "./services/CacheService.js";
-export { PackageFetcher, type PackageFetcherShape }
+export { PackageFetcher, type PackageMetadata }
   from "./services/PackageFetcher.js";
-export { TypeResolver, type TypeResolverShape }
-  from "./services/TypeResolver.js";
+export { TypeResolver } from "./services/TypeResolver.js";
 
 // Layers
 export { CacheServiceLive, makeNodeCacheLayer }
@@ -715,9 +766,19 @@ export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 export { getDefaultCacheDir } from "./utils/xdg.js";
 ```
 
-Note: The `*Base` exports (`CacheErrorBase`, `NetworkErrorBase`, etc.) are
-re-exported from `src/errors/index.ts` but not directly from the main
-`src/index.ts`. They are accessible via the errors barrel.
+Note: `*Base` exports for both schemas (`PackageSpecBase`, `ResolvedModuleBase`)
+and errors (`CacheErrorBase`, `NetworkErrorBase`, etc.) are exported directly
+from the main `src/index.ts` entry point for DTS bundling compatibility.
+
+### Node Entry Point
+
+The `type-registry-effect/node` entry point (`src/node.ts`) provides:
+
+- `NodeLayer` -- fully closed layer (no remaining `R` requirements)
+- Promise-returning wrappers: `hasCached`, `fetchAndCache`, `getVFS`,
+  `resolveVersion`, `createTypeScriptCache`
+- Re-exports of `*Base` constants and types needed for DTS bundling
+- Re-exports of service tags and schema types referenced by service interfaces
 
 ### TypeRegistry Namespace Module
 
@@ -728,10 +789,15 @@ function returns a composable `Effect<A, E, R>`:
 - `fetchAndCache(pkg, options?)` -- fetch and cache type definitions
 - `getPackageVFS(pkg, options?)` -- get VFS for a single package
 - `getVFS(packages, options?)` -- get combined VFS for multiple packages
+  (concurrent with limit of 5, graceful degradation on per-package failures)
 - `resolveImport(pkg, specifier)` -- resolve an import specifier
 - `getTypeEntries(pkg)` -- get all type entry points
 - `resolveVersion(name, ref)` -- resolve a version reference
 - `clearCache(pkg)` -- remove a package from cache
+
+Implementation note: `JSON.parse` calls in `resolveImport` and `getTypeEntries`
+are wrapped with `Effect.try` to produce typed `ParseError` values rather than
+throwing untyped exceptions.
 
 ### VirtualPackage
 
@@ -836,7 +902,8 @@ await Effect.runPromise(program);
 Abstract the TypeScript environment creation behind a service interface to
 enable browser support and testability:
 
-- Create `TypeScriptEnv` service with `*Shape` interface
+- Create `TypeScriptEnv` service with `Context.GenericTag` + interface/const
+  declaration merging (consistent with existing service pattern)
 - Implement `NodeTypeScriptEnvLive` (uses `createFSBackedSystem` +
   `createDefaultMapFromNodeModules`)
 - Refactor `createTypeScriptCache` from inline `@typescript/vfs` usage to

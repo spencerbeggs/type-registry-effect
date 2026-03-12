@@ -4,10 +4,10 @@ type-registry-effect uses a structured event system for observability.
 Events are defined with Effect Schema and emitted at key lifecycle
 points.
 
-> **Note:** The event system is being evaluated for integration with
-> Effect's built-in logging and tracing. The current callback-based API
-> will continue to work but may be supplemented with Effect-native
-> observability in a future release.
+> **Note:** The event system currently provides validated schemas and a
+> `createLogEvent` factory. There is no callback-based subscription API
+> yet. Integration with Effect's built-in logging and tracing is planned
+> for a future release.
 
 ## Event schema
 

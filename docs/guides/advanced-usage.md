@@ -41,23 +41,23 @@ const vfs = await Effect.runPromise(Effect.provide(program, CustomLayer));
 
 ### Replacing a service entirely
 
-Every service is a `Context.Tag`. Provide your own implementation via
-`Layer.succeed`:
+Every service is a `Context.GenericTag` with interface/const declaration
+merging. Provide your own implementation via `Layer.succeed`:
 
 ```typescript
 import { Layer, Effect } from "effect";
-import { CacheService, type CacheServiceShape } from "type-registry-effect";
+import { CacheService, CacheError } from "type-registry-effect";
 
 const InMemoryCache = Layer.succeed(CacheService, {
   exists: () => Effect.succeed(false),
-  read: () => Effect.fail(new CacheError({ message: "not implemented" })),
+  read: () => Effect.fail(new CacheError({ operation: "read", path: "", message: "not implemented" })),
   write: () => Effect.void,
   listFiles: () => Effect.succeed([]),
-  readMetadata: () => Effect.fail(new CacheError({ message: "no metadata" })),
+  readMetadata: () => Effect.fail(new CacheError({ operation: "read", path: "", message: "no metadata" })),
   writeMetadata: () => Effect.void,
   getVFS: () => Effect.succeed(new Map()),
   remove: () => Effect.void,
-} satisfies CacheServiceShape);
+} satisfies CacheService);
 ```
 
 ## Error handling
@@ -138,6 +138,7 @@ import {
   PackageSpec,
   PackageFetcher,
   CacheService,
+  CacheError,
   TypeResolver,
   TypeResolverLive,
 } from "type-registry-effect";
@@ -155,10 +156,10 @@ const MockFetcher = Layer.succeed(PackageFetcher, {
 // Inline mock for CacheService
 const MockCache = Layer.succeed(CacheService, {
   exists: () => Effect.succeed(false),
-  read: () => Effect.fail(new CacheError({ message: "not cached" })),
+  read: () => Effect.fail(new CacheError({ operation: "read", path: "", message: "not cached" })),
   write: () => Effect.void,
   listFiles: () => Effect.succeed([]),
-  readMetadata: () => Effect.fail(new CacheError({ message: "no metadata" })),
+  readMetadata: () => Effect.fail(new CacheError({ operation: "read", path: "", message: "no metadata" })),
   writeMetadata: () => Effect.void,
   getVFS: () => Effect.succeed(new Map([
     ["node_modules/mock/index.d.ts", "export declare const x: number;"],
