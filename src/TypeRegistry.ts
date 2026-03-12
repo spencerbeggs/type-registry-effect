@@ -20,7 +20,7 @@ import { Effect } from "effect";
 import type { CacheError } from "./errors/CacheError.js";
 import type { NetworkError } from "./errors/NetworkError.js";
 import { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
-import type { ParseError } from "./errors/ParseError.js";
+import { ParseError } from "./errors/ParseError.js";
 import type { ResolutionError } from "./errors/ResolutionError.js";
 import type { CacheMetadata } from "./schemas/CacheMetadata.js";
 import type { PackageJson } from "./schemas/PackageJson.js";
@@ -340,13 +340,16 @@ export const getVFS = (
 export const resolveImport = (
 	pkg: PackageSpec,
 	specifier: string,
-): Effect.Effect<ResolvedModule, CacheError | ResolutionError, CacheService | TypeResolver> =>
+): Effect.Effect<ResolvedModule, CacheError | ParseError | ResolutionError, CacheService | TypeResolver> =>
 	Effect.gen(function* () {
 		const cache = yield* CacheService;
 		const resolver = yield* TypeResolver;
 
 		const packageJsonContent = yield* cache.read(pkg, "package.json");
-		const packageJson = JSON.parse(packageJsonContent) as PackageJson;
+		const packageJson = yield* Effect.try({
+			try: () => JSON.parse(packageJsonContent) as PackageJson,
+			catch: (error) => new ParseError({ source: "package.json", message: String(error) }),
+		});
 
 		return yield* resolver.resolveImport(specifier, packageJson, pkg);
 	});
@@ -389,13 +392,20 @@ export const resolveImport = (
  */
 export const getTypeEntries = (
 	pkg: PackageSpec,
-): Effect.Effect<ReadonlyArray<ResolvedModule>, CacheError | ResolutionError, CacheService | TypeResolver> =>
+): Effect.Effect<
+	ReadonlyArray<ResolvedModule>,
+	CacheError | ParseError | ResolutionError,
+	CacheService | TypeResolver
+> =>
 	Effect.gen(function* () {
 		const cache = yield* CacheService;
 		const resolver = yield* TypeResolver;
 
 		const packageJsonContent = yield* cache.read(pkg, "package.json");
-		const packageJson = JSON.parse(packageJsonContent) as PackageJson;
+		const packageJson = yield* Effect.try({
+			try: () => JSON.parse(packageJsonContent) as PackageJson,
+			catch: (error) => new ParseError({ source: "package.json", message: String(error) }),
+		});
 
 		return yield* resolver.resolveTypeEntries(packageJson, pkg);
 	});

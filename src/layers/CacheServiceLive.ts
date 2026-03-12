@@ -50,6 +50,22 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 			const fs = yield* FileSystem.FileSystem;
 			const cacheDir = baseDir ?? getDefaultCacheDir();
 
+			const listRecursive = (dir: string, relativeTo: string): Effect.Effect<string[], CacheError, never> =>
+				Effect.gen(function* () {
+					const entries = yield* fs.readDirectory(dir).pipe(Effect.mapError(mapToCacheError("list", dir)));
+					const files: string[] = [];
+					for (const entry of entries) {
+						const fullPath = Path.join(dir, entry);
+						const stat = yield* fs.stat(fullPath).pipe(Effect.mapError(mapToCacheError("list", fullPath)));
+						if (stat.type === "Directory") {
+							files.push(...(yield* listRecursive(fullPath, relativeTo)));
+						} else {
+							files.push(Path.relative(relativeTo, fullPath));
+						}
+					}
+					return files;
+				});
+
 			return {
 				exists: (pkg) => fs.exists(pkgDir(cacheDir, pkg)).pipe(Effect.catchAll(() => Effect.succeed(false))),
 
@@ -71,23 +87,7 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 
 				listFiles: (pkg) => {
 					const cachePath = pkgDir(cacheDir, pkg);
-					const listRecursive = (dir: string): Effect.Effect<string[], CacheError, never> =>
-						Effect.gen(function* () {
-							const entries = yield* fs.readDirectory(dir).pipe(Effect.mapError(mapToCacheError("list", dir)));
-							const files: string[] = [];
-							for (const entry of entries) {
-								const fullPath = Path.join(dir, entry);
-								const stat = yield* fs.stat(fullPath).pipe(Effect.mapError(mapToCacheError("list", fullPath)));
-								if (stat.type === "Directory") {
-									const subFiles = yield* listRecursive(fullPath);
-									files.push(...subFiles);
-								} else {
-									files.push(Path.relative(cachePath, fullPath));
-								}
-							}
-							return files;
-						});
-					return listRecursive(cachePath);
+					return listRecursive(cachePath, cachePath);
 				},
 
 				readMetadata: (pkg) => {
@@ -119,24 +119,7 @@ export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, 
 				getVFS: (pkg) =>
 					Effect.gen(function* () {
 						const cachePath = pkgDir(cacheDir, pkg);
-						const listRecursive = (dir: string): Effect.Effect<string[], CacheError, never> =>
-							Effect.gen(function* () {
-								const entries = yield* fs.readDirectory(dir).pipe(Effect.mapError(mapToCacheError("list", dir)));
-								const files: string[] = [];
-								for (const entry of entries) {
-									const fullPath = Path.join(dir, entry);
-									const stat = yield* fs.stat(fullPath).pipe(Effect.mapError(mapToCacheError("list", fullPath)));
-									if (stat.type === "Directory") {
-										const subFiles = yield* listRecursive(fullPath);
-										files.push(...subFiles);
-									} else {
-										files.push(Path.relative(cachePath, fullPath));
-									}
-								}
-								return files;
-							});
-
-						const files = yield* listRecursive(cachePath);
+						const files = yield* listRecursive(cachePath, cachePath);
 						const vfs: VirtualFileSystem = new Map();
 						for (const file of files) {
 							if (file === ".metadata.json") continue;

@@ -5,6 +5,7 @@ import { PackageNotFoundError } from "../errors/PackageNotFoundError.js";
 import { ParseError } from "../errors/ParseError.js";
 import { FileTreeResponse } from "../schemas/FileTree.js";
 import { PackageJson } from "../schemas/PackageJson.js";
+import type { PackageSpec } from "../schemas/PackageSpec.js";
 import type { PackageMetadata } from "../services/PackageFetcher.js";
 import { JSDELIVR_CDN, JSDELIVR_DATA_API, PackageFetcher, TYPE_FILE_PATTERN } from "../services/PackageFetcher.js";
 
@@ -47,6 +48,21 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 				Effect.mapError((error) => new NetworkError({ url, message: String(error) })),
 			);
 
+		const getFileTree = (pkg: PackageSpec) =>
+			fetchJson(`${JSDELIVR_DATA_API}/package/npm/${pkg.name}@${pkg.version}/flat`).pipe(
+				Effect.flatMap((data) =>
+					Schema.decodeUnknown(FileTreeResponse)(data).pipe(
+						Effect.mapError(
+							(e) =>
+								new ParseError({
+									source: `${pkg.name}@${pkg.version}/flat`,
+									message: `Schema validation failed: ${String(e)}`,
+								}),
+						),
+					),
+				),
+			);
+
 		return {
 			getVersions: (name) =>
 				fetchJson(`${JSDELIVR_DATA_API}/package/npm/${name}`).pipe(Effect.map((data) => data as PackageMetadata)),
@@ -59,20 +75,7 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 					),
 				),
 
-			getFileTree: (pkg) =>
-				fetchJson(`${JSDELIVR_DATA_API}/package/npm/${pkg.name}@${pkg.version}/flat`).pipe(
-					Effect.flatMap((data) =>
-						Schema.decodeUnknown(FileTreeResponse)(data).pipe(
-							Effect.mapError(
-								(e) =>
-									new ParseError({
-										source: `${pkg.name}@${pkg.version}/flat`,
-										message: `Schema validation failed: ${String(e)}`,
-									}),
-							),
-						),
-					),
-				),
+			getFileTree,
 
 			downloadFile: (pkg, filePath) => {
 				const normalizedPath = filePath.startsWith("/") ? filePath : `/${filePath}`;
@@ -106,19 +109,7 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 
 			getTypeFiles: (pkg) =>
 				Effect.gen(function* () {
-					const fileTree = yield* fetchJson(`${JSDELIVR_DATA_API}/package/npm/${pkg.name}@${pkg.version}/flat`).pipe(
-						Effect.flatMap((data) =>
-							Schema.decodeUnknown(FileTreeResponse)(data).pipe(
-								Effect.mapError(
-									(e) =>
-										new ParseError({
-											source: `${pkg.name}@${pkg.version}/flat`,
-											message: `Schema validation failed: ${String(e)}`,
-										}),
-								),
-							),
-						),
-					);
+					const fileTree = yield* getFileTree(pkg);
 
 					const typeFiles = fileTree.files.filter((f) => TYPE_FILE_PATTERN.test(f.name));
 					const vfs = new Map<string, string>();

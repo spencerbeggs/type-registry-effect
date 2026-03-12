@@ -1,4 +1,3 @@
-import * as Path from "node:path";
 import { Effect, Layer } from "effect";
 import type { PackageJson } from "../schemas/PackageJson.js";
 import { ResolvedModule } from "../schemas/ResolvedModule.js";
@@ -6,10 +5,8 @@ import { TypeResolver } from "../services/TypeResolver.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-const TYPE_EXTENSIONS = new Set([".d.ts", ".d.mts", ".d.cts"]);
-
 function isTypeDefinition(filePath: string): boolean {
-	return TYPE_EXTENSIONS.has(Path.extname(filePath)) || filePath.endsWith(".d.ts");
+	return filePath.endsWith(".d.ts") || filePath.endsWith(".d.mts") || filePath.endsWith(".d.cts");
 }
 
 function normalizePath(path: string): string {
