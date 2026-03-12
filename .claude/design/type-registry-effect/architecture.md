@@ -3,9 +3,9 @@ status: draft
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-03-12
-last-synced: 2026-03-12
-completeness: 40
+updated: 2026-03-11
+last-synced: 2026-03-11
+completeness: 65
 related:
   - ./observability.md
   - ./cache-optimization.md
@@ -19,36 +19,36 @@ dependencies: []
 1. [Overview](#overview)
 2. [Current State](#current-state)
 3. [Rationale](#rationale)
-4. [Target Architecture](#target-architecture)
+4. [Implementation Status](#implementation-status)
 5. [Data Layer](#data-layer)
 6. [Error Layer](#error-layer)
 7. [Service Layer](#service-layer)
 8. [Layer Composition](#layer-composition)
-9. [Platform Abstraction](#platform-abstraction)
+9. [Platform Support](#platform-support)
 10. [Public API](#public-api)
 11. [Testing Strategy](#testing-strategy)
-12. [Migration Path](#migration-path)
+12. [Future Work](#future-work)
 13. [Related Documentation](#related-documentation)
 
 ---
 
 ## Overview
 
-This document describes the refactoring of `type-registry-effect` from a
-class-based wrapper around Effect programs into a first-class Effect library
-with platform-agnostic architecture supporting both Node.js and browser
-environments.
+This document describes `type-registry-effect`, an Effect-first library for
+composing virtual TypeScript environments with automatic package fetching,
+disk caching, and version-aware type resolution. It is designed for use with
+Twoslash-based documentation tooling and TypeScript language service consumers.
 
-The library composes virtual TypeScript environments with automatic package
-fetching, disk/browser caching, and version-aware type resolution. It is
-designed for use with Twoslash-based documentation tooling and TypeScript
-language service consumers.
+The library exposes composable `Effect<A, E, R>` programs as its primary API,
+with a Promise-based convenience API for non-Effect consumers. Platform
+dependencies (`FileSystem`, `HttpClient`) are resolved within layer
+implementations, keeping service interfaces platform-agnostic.
 
 ### Design Principles
 
 1. **Effect programs as values** -- expose composable `Effect<A, E, R>`
    programs, not Promise-returning methods
-2. **Platform-agnostic core** -- business logic has zero platform
+2. **Platform-agnostic service interfaces** -- business logic has zero platform
    dependencies; Node/browser support via swappable layers
 3. **Typed errors** -- `Data.TaggedError` for every failure mode, enabling
    `catchTag`-based recovery
@@ -56,50 +56,49 @@ language service consumers.
    (CDN responses, cache reads) via Effect Schema
 5. **Composable services** -- `Context.Tag`-based services with proper
    `Layer` implementations for dependency injection
+6. **`*Shape` interface convention** -- service shapes are named
+   `CacheServiceShape`, `PackageFetcherShape`, `TypeResolverShape`
+7. **`*Base` exports for DTS bundling** -- error and data class base values
+   are exported for api-extractor compatibility
 
-### Reference Implementations
+### Key Dependencies
 
-This design follows patterns established in two sibling packages:
-
-- **semver-effect** -- `Data.TaggedClass` for domain types,
-  `Data.TaggedError` for errors, `Context.GenericTag` + `Layer` for services,
-  namespace modules for public API
-- **runtime-resolver** -- multi-layer composition with `Layer.tap` for
-  initialization, generic cache factories, Promise convenience API at package
-  edge only
+- **effect** -- core Effect runtime, Context, Layer, Schema, Data
+- **@effect/platform** -- `FileSystem`, `HttpClient` abstractions
+- **@effect/platform-node** -- Node.js implementations of platform services
+- **@typescript/vfs** -- virtual TypeScript environments
+- **semver-effect** -- declared as a runtime dependency (version resolution)
 
 ---
 
 ## Current State
 
-### Anti-Pattern Summary
+The library has been refactored from a class-based wrapper around Effect
+programs into a first-class Effect library. The previous `TypeRegistry` class
+that wrapped every Effect program in `async` methods calling
+`Effect.runPromise` has been replaced with a namespace module exposing
+composable Effect programs.
 
-The current implementation has three critical issues that prevent Effect
-composition:
+### What Has Been Completed
 
-1. **Class wrapper** -- `TypeRegistry` class wraps every Effect program in
-   `async` methods that call `Effect.runPromise` internally. Users receive
-   `Promise<T>` instead of `Effect<T, E, R>`, preventing composition with
-   their own Effect programs.
+- Data layer: `Data.TaggedClass` and `Schema.Class` types in `src/schemas/`
+- Error layer: `Data.TaggedError` types with `*Base` exports in `src/errors/`
+- Service interfaces with `Context.Tag` class pattern and `*Shape` naming
+- Layer implementations: `CacheServiceLive`, `PackageFetcherLive`,
+  `TypeResolverLive`
+- Composed `TypeRegistryLive` layer
+- `TypeRegistry` namespace module with composable Effect programs
+- Node.js platform layer with Promise convenience API
+- `VirtualPackage` utility class for transient VFS generation
+- Structured log event system using Effect Schema
+- Comprehensive test suite (unit, integration, schema, layer tests)
 
-2. **Ad-hoc layers** -- `runWithServices` (line 466-486 of TypeRegistry.ts)
-   reconstructs the full layer stack on every method call. No way for
-   consumers to customize or extend the service graph.
+### What Is Not Yet Implemented
 
-3. **Services without layers** -- `PackageFetcherLive` and `TypeResolverLive`
-   are `Effect` values, not `Layer` values. This forces the use of
-   `Effect.provideServiceEffect` instead of standard layer composition.
-
-### Additional Issues
-
-| Category | Issue | Impact |
-| :------- | :---- | :----- |
-| Errors | All errors are plain `Error`/`throw` | Cannot `catchTag`, no discrimination |
-| Data | Plain TS interfaces, no runtime validation | Unsafe `JSON.parse(...) as T` everywhere |
-| Logging | Manual callback-based event emission | Bypasses Effect structured logging |
-| Platform | Hardcoded `node:path`, `NodeFileSystem`, `NodeHttpClient` | No browser support |
-| Concurrency | `maxConcurrency` option defined but unused | No backpressure |
-| Resources | No `acquireRelease` or `Scope` usage | No cleanup guarantees |
+- `TypeScriptEnv` service (planned for Phase 4)
+- Browser platform support (planned for Phase 5)
+- `semver-effect` integration in version resolution (dependency declared but
+  not yet used in source)
 
 ---
 
@@ -107,96 +106,79 @@ composition:
 
 ### Why Effect-First?
 
-The library already uses Effect internally for every operation. The class
-wrapper exists solely to present a Promise-based API. This:
-
-- Prevents users from composing registry operations with their own Effects
-- Forces eager execution (no lazy evaluation or cancellation)
-- Duplicates layer construction on every call
-- Makes testing harder (must test through Promise boundary)
-
-By exposing Effect programs directly, consumers can:
+The library uses Effect internally for every operation. By exposing Effect
+programs directly, consumers can:
 
 - Compose registry operations into larger Effect pipelines
 - Provide custom service implementations (mock fetchers, alternative caches)
 - Control execution timing, cancellation, and concurrency
 - Access structured error information via `catchTag`
 
-### Why Platform-Agnostic?
+### Why Platform-Agnostic Service Interfaces?
 
 The core operations -- fetching type definitions from jsDelivr, resolving
-imports from package.json, building VFS maps -- are pure data transformations
-that work identically in Node.js and browsers. Only two concerns are
-platform-specific:
+imports from package.json, building VFS maps -- are pure data transformations.
+Only caching (filesystem vs IndexedDB) and TypeScript environment creation
+are platform-specific.
 
-1. **Caching** -- filesystem (Node) vs IndexedDB/localStorage (browser)
-2. **TypeScript environment** -- `createFSBackedSystem` (Node) vs
-   `createSystem` (browser), plus lib file sourcing
-
-Microsoft's `@typescript/vfs` already provides both paths. Effect's
-`@effect/platform` provides `HttpClient` and `FileSystem` abstractions with
-Node and browser implementations. The architecture maps naturally to
-platform-specific layers.
+Service interfaces contain no `HttpClient` or `FileSystem` in their method
+signatures. Platform dependencies are resolved within layer implementations
+via `Effect.gen`, keeping the interface contracts clean.
 
 ---
 
-## Target Architecture
+## Implementation Status
 
-### Dependency Graph
+### Phase 1: Data & Errors -- COMPLETE
 
-```text
-Consumer code (Effect programs or Promise API)
-         |
-    TypeRegistry module (composable Effect programs)
-         |
-    +-----------+-----------+-----------+
-    |           |           |           |
-CacheService  PackageFetcher TypeResolver TypeScriptEnv
-    |           |           |           |
-    v           v           v           v
-  Platform Layers (Node.js OR Browser)
-```
+- `src/schemas/PackageSpec.ts` -- `Data.TaggedClass` with structural equality
+- `src/schemas/CacheMetadata.ts` -- `Schema.Class` for cache serialization
+- `src/schemas/PackageJson.ts` -- `Schema.Struct` for validated CDN parsing
+- `src/schemas/FileTree.ts` -- `Schema.Struct` for jsDelivr file tree response
+- `src/schemas/ResolvedModule.ts` -- `Data.TaggedClass` for resolution results
+- `src/errors/*.ts` -- `Data.TaggedError` types with `*Base` exports
 
-### Directory Structure
+### Phase 2: Service Refactoring -- COMPLETE
 
-```text
-src/
-  index.ts                    -- Public API (namespace exports)
-  TypeRegistry.ts             -- Composable Effect programs (no class)
-  VirtualPackage.ts           -- Virtual package builder
+- Services converted to `Context.Tag` class pattern with `*Shape` interfaces
+- `PackageFetcherLive` and `TypeResolverLive` are proper `Layer` values
+- Schema validation applied to CDN response parsing
+- `FileSystem` and `HttpClient` resolved within layers, not in interfaces
 
-  schemas/
-    PackageSpec.ts            -- Data.TaggedClass
-    CacheMetadata.ts          -- Schema.Class (serializable)
-    PackageJson.ts            -- Schema.Struct (validated parsing)
-    FileTree.ts               -- Schema.Struct (CDN response)
-    ResolvedModule.ts         -- Data.TaggedClass
+### Phase 3: Remove TypeRegistry Class -- COMPLETE
 
-  errors/
-    CacheError.ts             -- Data.TaggedError
-    NetworkError.ts           -- Data.TaggedError
-    PackageNotFoundError.ts   -- Data.TaggedError
-    ParseError.ts             -- Data.TaggedError
-    ResolutionError.ts        -- Data.TaggedError
-    TimeoutError.ts           -- Data.TaggedError
+- `src/TypeRegistry.ts` is a namespace module with composable Effect programs
+- `src/layers/TypeRegistryLive.ts` composes all three service layers
+- `src/platforms/node.ts` provides `NodeLayer` + Promise convenience API
+- Old `TypeRegistry` class removed
+- Layer-based testing in place
 
-  services/
-    CacheService.ts           -- Context.Tag + interface
-    PackageFetcher.ts         -- Context.Tag + interface
-    TypeResolver.ts           -- Context.Tag + interface
-    TypeScriptEnv.ts          -- Context.Tag + interface (new)
+### Phase 4: TypeScriptEnv Service -- PLANNED
 
-  layers/
-    CacheServiceLive.ts       -- Layer (platform-agnostic interface)
-    PackageFetcherLive.ts     -- Layer (uses HttpClient)
-    TypeResolverLive.ts       -- Layer (pure, no deps)
-    TypeScriptEnvLive.ts      -- Layer (platform-specific)
-    TypeRegistryLive.ts       -- Composed layer (all services)
+Not yet implemented. Currently, TypeScript environment creation is handled
+directly in `src/platforms/node.ts` via the `createTypeScriptCache` function,
+which uses `@typescript/vfs` APIs (`createFSBackedSystem`,
+`createDefaultMapFromNodeModules`, `createVirtualTypeScriptEnvironment`)
+inline rather than through a service abstraction.
 
-  platforms/
-    node.ts                   -- Node layers + Promise API
-    browser.ts                -- Browser layers + Promise API
-```
+Planned work:
+
+1. Create `TypeScriptEnv` service interface
+2. Implement `NodeTypeScriptEnvLive`
+3. Update `createTypeScriptCache` to use the service
+4. Add `TypeScriptEnv` to `TypeRegistryLive` composed layer
+
+### Phase 5: Browser Support -- PLANNED
+
+Not yet implemented. Requires Phase 4 completion first.
+
+Planned work:
+
+1. Implement `BrowserCacheServiceLive` (IndexedDB)
+2. Implement `BrowserTypeScriptEnvLive` (CDN lib files + `createSystem`)
+3. Create `src/platforms/browser.ts` with `BrowserLayer` + Promise API
+4. Add browser-specific tests
+5. Configure package.json conditional exports
 
 ---
 
@@ -209,21 +191,22 @@ to identify a package at a specific version.
 
 ```typescript
 // src/schemas/PackageSpec.ts
-import { Data, Equal, Hash } from "effect"
+import { Data } from "effect";
 
-const PackageSpecBase = Data.TaggedClass("PackageSpec")
+/** @internal */
+export const PackageSpecBase = Data.TaggedClass("PackageSpec");
 
 export class PackageSpec extends PackageSpecBase<{
-  readonly name: string
-  readonly version: string
-  readonly registry?: string
+  readonly name: string;
+  readonly version: string;
+  readonly registry?: string;
 }> {
   toString(): string {
-    return `${this.name}@${this.version}`
+    return `${this.name}@${this.version}`;
   }
 
   [Symbol.for("nodejs.util.inspect.custom")](): string {
-    return this.toString()
+    return this.toString();
   }
 }
 ```
@@ -234,7 +217,7 @@ Schema.Class for serialization to/from cache storage. Validated on read.
 
 ```typescript
 // src/schemas/CacheMetadata.ts
-import { Schema } from "effect"
+import { Schema } from "effect";
 
 export class CacheMetadata extends Schema.Class<CacheMetadata>(
   "CacheMetadata"
@@ -247,12 +230,12 @@ export class CacheMetadata extends Schema.Class<CacheMetadata>(
 
 ### PackageJson
 
-Schema.Struct for validated parsing of CDN responses. Replaces unsafe
-`JSON.parse(...) as PackageJson`.
+Schema.Struct for validated parsing of CDN responses. Includes
+`devDependencies` in addition to the standard fields.
 
 ```typescript
 // src/schemas/PackageJson.ts
-import { Schema } from "effect"
+import { Schema } from "effect";
 
 export const PackageJson = Schema.Struct({
   name: Schema.String,
@@ -270,49 +253,63 @@ export const PackageJson = Schema.Struct({
   typesVersions: Schema.optional(
     Schema.Record({
       key: Schema.String,
-      value: Schema.Record({ key: Schema.String, value: Schema.Array(Schema.String) })
+      value: Schema.Record({
+        key: Schema.String,
+        value: Schema.Array(Schema.String),
+      }),
     })
   ),
-  dependencies: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
-  peerDependencies: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
-})
+  dependencies: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.String })
+  ),
+  peerDependencies: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.String })
+  ),
+  devDependencies: Schema.optional(
+    Schema.Record({ key: Schema.String, value: Schema.String })
+  ),
+});
 
-export type PackageJson = Schema.Schema.Type<typeof PackageJson>
+export type PackageJson = Schema.Schema.Type<typeof PackageJson>;
 ```
 
 ### FileTree (CDN Response)
 
 ```typescript
 // src/schemas/FileTree.ts
-import { Schema } from "effect"
+import { Schema } from "effect";
 
 export const FileTreeEntry = Schema.Struct({
   name: Schema.String,
   hash: Schema.String,
   time: Schema.String,
   size: Schema.Number,
-})
+});
+
+export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
 
 export const FileTreeResponse = Schema.Struct({
   default: Schema.String,
   files: Schema.Array(FileTreeEntry),
-})
+});
 
-export type FileTreeResponse = Schema.Schema.Type<typeof FileTreeResponse>
+export type FileTreeResponse = Schema.Schema.Type<typeof FileTreeResponse>;
 ```
 
 ### ResolvedModule
 
 ```typescript
 // src/schemas/ResolvedModule.ts
-import { Data } from "effect"
+import { Data } from "effect";
+import type { PackageSpec } from "./PackageSpec.js";
 
-const ResolvedModuleBase = Data.TaggedClass("ResolvedModule")
+/** @internal */
+export const ResolvedModuleBase = Data.TaggedClass("ResolvedModule");
 
 export class ResolvedModule extends ResolvedModuleBase<{
-  readonly filePath: string
-  readonly isTypeDefinition: boolean
-  readonly package: PackageSpec
+  readonly filePath: string;
+  readonly isTypeDefinition: boolean;
+  readonly package: PackageSpec;
 }> {}
 ```
 
@@ -322,72 +319,78 @@ export class ResolvedModule extends ResolvedModuleBase<{
 
 Every failure mode gets a `Data.TaggedError` with contextual fields.
 Consumers use `catchTag` / `catchTags` for precise recovery. Each error
-exports a `*Base` for DTS bundling compatibility with api-extractor.
+exports a `*Base` value for DTS bundling compatibility with api-extractor.
 
 ```typescript
-// src/errors/NetworkError.ts
-import { Data } from "effect"
+// src/errors/CacheError.ts
+import { Data } from "effect";
 
-export const NetworkErrorBase = Data.TaggedError("NetworkError")
+/** @internal */
+export const CacheErrorBase = Data.TaggedError("CacheError");
 
-export class NetworkError extends NetworkErrorBase<{
-  readonly url: string
-  readonly status?: number
-  readonly message: string
+export class CacheError extends CacheErrorBase<{
+  readonly operation: "read" | "write" | "delete" | "list";
+  readonly path: string;
+  readonly message: string;
 }> {}
 ```
 
 ```typescript
-// src/errors/CacheError.ts
-export const CacheErrorBase = Data.TaggedError("CacheError")
+// src/errors/NetworkError.ts
+/** @internal */
+export const NetworkErrorBase = Data.TaggedError("NetworkError");
 
-export class CacheError extends CacheErrorBase<{
-  readonly operation: "read" | "write" | "delete" | "list"
-  readonly path: string
-  readonly message: string
+export class NetworkError extends NetworkErrorBase<{
+  readonly url: string;
+  readonly status?: number;
+  readonly message: string;
 }> {}
 ```
 
 ```typescript
 // src/errors/PackageNotFoundError.ts
-export const PackageNotFoundErrorBase = Data.TaggedError("PackageNotFoundError")
+/** @internal */
+export const PackageNotFoundErrorBase = Data.TaggedError("PackageNotFoundError");
 
 export class PackageNotFoundError extends PackageNotFoundErrorBase<{
-  readonly name: string
-  readonly version: string
-  readonly message: string
+  readonly name: string;
+  readonly version: string;
+  readonly message: string;
 }> {}
 ```
 
 ```typescript
 // src/errors/ParseError.ts
-export const ParseErrorBase = Data.TaggedError("ParseError")
+/** @internal */
+export const ParseErrorBase = Data.TaggedError("ParseError");
 
 export class ParseError extends ParseErrorBase<{
-  readonly source: string
-  readonly message: string
+  readonly source: string;
+  readonly message: string;
 }> {}
 ```
 
 ```typescript
 // src/errors/ResolutionError.ts
-export const ResolutionErrorBase = Data.TaggedError("ResolutionError")
+/** @internal */
+export const ResolutionErrorBase = Data.TaggedError("ResolutionError");
 
 export class ResolutionError extends ResolutionErrorBase<{
-  readonly package: string
-  readonly specifier: string
-  readonly message: string
+  readonly package: string;
+  readonly specifier: string;
+  readonly message: string;
 }> {}
 ```
 
 ```typescript
 // src/errors/TimeoutError.ts
-export const TimeoutErrorBase = Data.TaggedError("TimeoutError")
+/** @internal */
+export const TimeoutErrorBase = Data.TaggedError("TimeoutError");
 
 export class TimeoutError extends TimeoutErrorBase<{
-  readonly operation: string
-  readonly duration: number
-  readonly message: string
+  readonly operation: string;
+  readonly duration: number;
+  readonly message: string;
 }> {}
 ```
 
@@ -396,795 +399,483 @@ export class TimeoutError extends TimeoutErrorBase<{
 ```typescript
 // src/errors/index.ts
 export type TypeRegistryError =
-  | NetworkError
   | CacheError
+  | NetworkError
   | PackageNotFoundError
   | ParseError
   | ResolutionError
-  | TimeoutError
+  | TimeoutError;
 ```
 
 ### Consumer Usage
 
 ```typescript
-import { Effect } from "effect"
-import * as TypeRegistry from "type-registry-effect"
+import { Effect } from "effect";
+import * as TypeRegistry from "type-registry-effect";
 
-TypeRegistry.fetchAndCache(pkg).pipe(
+TypeRegistry.TypeRegistry.fetchAndCache(pkg).pipe(
   Effect.catchTags({
     NetworkError: (e) => Effect.log(`Network failed: ${e.url} (${e.status})`),
     CacheError: (e) => Effect.log(`Cache ${e.operation} failed: ${e.path}`),
-    PackageNotFoundError: (e) => Effect.log(`${e.name}@${e.version} not found`),
+    PackageNotFoundError: (e) =>
+      Effect.log(`${e.name}@${e.version} not found`),
   })
-)
+);
 ```
 
 ---
 
 ## Service Layer
 
-Services use `Context.GenericTag` with the companion object pattern (matching
-semver-effect and runtime-resolver conventions). Each service method returns
-`Effect<A, E>` with typed errors -- no `HttpClient` or `FileSystem` in
-method signatures since those are resolved within layers.
+Services use the `Context.Tag` class pattern. Each service defines a `*Shape`
+interface for its methods and a class extending `Context.Tag` for dependency
+injection. Method signatures return `Effect<A, E>` with typed errors -- no
+`HttpClient` or `FileSystem` in method signatures since those are resolved
+within layers.
 
 ### CacheService
 
 ```typescript
 // src/services/CacheService.ts
-import type { Effect } from "effect"
-import { Context } from "effect"
+import type { Effect } from "effect";
+import { Context } from "effect";
 
-export interface CacheService {
-  readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, CacheError>
-  readonly read: (pkg: PackageSpec, filePath: string) => Effect.Effect<string, CacheError>
-  readonly write: (pkg: PackageSpec, filePath: string, content: string) => Effect.Effect<void, CacheError>
-  readonly listFiles: (pkg: PackageSpec) => Effect.Effect<ReadonlyArray<string>, CacheError>
-  readonly readMetadata: (pkg: PackageSpec) => Effect.Effect<CacheMetadata, CacheError>
-  readonly writeMetadata: (pkg: PackageSpec, metadata: CacheMetadata) => Effect.Effect<void, CacheError>
-  readonly getVFS: (pkg: PackageSpec) => Effect.Effect<VirtualFileSystem, CacheError>
-  readonly remove: (pkg: PackageSpec) => Effect.Effect<void, CacheError>
+export type VirtualFileSystem = Map<string, string>;
+
+export interface CacheServiceShape {
+  readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, CacheError>;
+  readonly read: (
+    pkg: PackageSpec,
+    filePath: string,
+  ) => Effect.Effect<string, CacheError>;
+  readonly write: (
+    pkg: PackageSpec,
+    filePath: string,
+    content: string,
+  ) => Effect.Effect<void, CacheError>;
+  readonly listFiles: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<ReadonlyArray<string>, CacheError>;
+  readonly readMetadata: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<CacheMetadata, CacheError>;
+  readonly writeMetadata: (
+    pkg: PackageSpec,
+    metadata: CacheMetadata,
+  ) => Effect.Effect<void, CacheError>;
+  readonly getVFS: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<VirtualFileSystem, CacheError>;
+  readonly remove: (pkg: PackageSpec) => Effect.Effect<void, CacheError>;
 }
 
-export const CacheService = Context.GenericTag<CacheService>("type-registry-effect/CacheService")
+export class CacheService extends Context.Tag(
+  "type-registry-effect/CacheService"
+)<CacheService, CacheServiceShape>() {}
 ```
-
-Note: `FileSystem.FileSystem` is no longer in method signatures. The layer
-implementation closes over its platform dependency.
 
 ### PackageFetcher
 
 ```typescript
 // src/services/PackageFetcher.ts
-export interface PackageFetcher {
-  readonly getVersions: (name: string) => Effect.Effect<PackageMetadata, NetworkError | ParseError>
-  readonly resolveVersion: (name: string, ref: string) => Effect.Effect<string, NetworkError | PackageNotFoundError>
-  readonly getFileTree: (pkg: PackageSpec) => Effect.Effect<FileTreeResponse, NetworkError | ParseError>
-  readonly downloadFile: (pkg: PackageSpec, path: string) => Effect.Effect<string, NetworkError>
-  readonly getPackageJson: (pkg: PackageSpec) => Effect.Effect<PackageJson, NetworkError | ParseError>
-  readonly getTypeFiles: (pkg: PackageSpec) => Effect.Effect<Map<string, string>, NetworkError | ParseError>
+export interface PackageMetadata {
+  readonly versions: string[];
+  readonly tags: Record<string, string>;
 }
 
-export const PackageFetcher = Context.GenericTag<PackageFetcher>("type-registry-effect/PackageFetcher")
+export interface PackageFetcherShape {
+  readonly getVersions: (
+    name: string,
+  ) => Effect.Effect<PackageMetadata, NetworkError | ParseError>;
+  readonly resolveVersion: (
+    name: string,
+    ref: string,
+  ) => Effect.Effect<string, NetworkError | PackageNotFoundError>;
+  readonly getFileTree: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<FileTreeResponse, NetworkError | ParseError>;
+  readonly downloadFile: (
+    pkg: PackageSpec,
+    path: string,
+  ) => Effect.Effect<string, NetworkError>;
+  readonly getPackageJson: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<PackageJson, NetworkError | ParseError>;
+  readonly getTypeFiles: (
+    pkg: PackageSpec,
+  ) => Effect.Effect<Map<string, string>, NetworkError | ParseError>;
+}
+
+export class PackageFetcher extends Context.Tag(
+  "type-registry-effect/PackageFetcher"
+)<PackageFetcher, PackageFetcherShape>() {}
 ```
+
+The `PackageFetcher` module also exports constants (`JSDELIVR_DATA_API`,
+`JSDELIVR_CDN`, `TYPE_FILE_PATTERN`), the `NODE_BUILTINS` set, and a
+`normalizeModuleName` helper function used by the layer implementation.
 
 ### TypeResolver
 
 ```typescript
 // src/services/TypeResolver.ts
-export interface TypeResolver {
+export interface TypeResolverShape {
   readonly resolveImport: (
     specifier: string,
     packageJson: PackageJson,
     pkg: PackageSpec,
-  ) => Effect.Effect<ResolvedModule, ResolutionError>
+  ) => Effect.Effect<ResolvedModule, ResolutionError>;
 
   readonly resolveMainEntry: (
     packageJson: PackageJson,
     pkg: PackageSpec,
-  ) => Effect.Effect<ResolvedModule, ResolutionError>
+  ) => Effect.Effect<ResolvedModule, ResolutionError>;
 
   readonly resolveTypeEntries: (
     packageJson: PackageJson,
     pkg: PackageSpec,
-  ) => Effect.Effect<ReadonlyArray<ResolvedModule>, ResolutionError>
+  ) => Effect.Effect<ReadonlyArray<ResolvedModule>, ResolutionError>;
+
+  readonly findTypeDefinition: (
+    jsFilePath: string,
+    packageJson: PackageJson,
+    pkg: PackageSpec,
+  ) => Effect.Effect<ResolvedModule | null, ResolutionError>;
 }
 
-export const TypeResolver = Context.GenericTag<TypeResolver>("type-registry-effect/TypeResolver")
+export class TypeResolver extends Context.Tag(
+  "type-registry-effect/TypeResolver"
+)<TypeResolver, TypeResolverShape>() {}
 ```
 
-### TypeScriptEnv (New)
-
-Abstracts the platform-specific TypeScript environment creation. This is the
-key service for browser compatibility.
-
-```typescript
-// src/services/TypeScriptEnv.ts
-import type { VirtualTypeScriptEnvironment } from "@typescript/vfs"
-
-export interface TypeScriptEnv {
-  /** Create a VirtualTypeScriptEnvironment from a VFS map */
-  readonly createEnvironment: (
-    vfs: VirtualFileSystem,
-    compilerOptions: import("typescript").CompilerOptions,
-  ) => Effect.Effect<VirtualTypeScriptEnvironment, TypeScriptEnvError>
-
-  /** Get default TypeScript lib files for given compiler options */
-  readonly getLibFiles: (
-    compilerOptions: import("typescript").CompilerOptions,
-  ) => Effect.Effect<Map<string, string>, NetworkError>
-}
-
-export const TypeScriptEnv = Context.GenericTag<TypeScriptEnv>("type-registry-effect/TypeScriptEnv")
-```
+Note: `TypeResolverShape` includes a `findTypeDefinition` method not present
+in the original design. This maps JS file paths to their corresponding `.d.ts`
+counterparts.
 
 ---
 
 ## Layer Composition
 
+### CacheServiceLive
+
+Node.js filesystem-based cache using `@effect/platform` FileSystem with
+XDG-compliant paths. Provides a `makeNodeCacheLayer` factory for custom base
+directories.
+
+```typescript
+// src/layers/CacheServiceLive.ts
+export const makeNodeCacheLayer = (
+  baseDir?: string,
+): Layer.Layer<CacheService, never, FileSystem.FileSystem> =>
+  Layer.effect(CacheService, Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cacheDir = baseDir ?? getDefaultCacheDir();
+    return { /* CacheServiceShape implementation */ };
+  }));
+
+export const CacheServiceLive: Layer.Layer<
+  CacheService, never, FileSystem.FileSystem
+> = makeNodeCacheLayer();
+```
+
 ### PackageFetcherLive
 
-Proper `Layer` instead of `Effect`. Uses Schema for response validation.
+Uses `@effect/platform` HttpClient with Schema validation, retry schedules,
+and timeout. The HttpClient dependency is resolved within the layer via
+`Effect.gen`.
 
 ```typescript
 // src/layers/PackageFetcherLive.ts
-import { HttpClient } from "@effect/platform"
-import { Layer, Effect, Schema } from "effect"
-
-export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.HttpClient> =
-  Layer.effect(
-    PackageFetcher,
-    Effect.gen(function* () {
-      const http = yield* HttpClient.HttpClient
-
-      return PackageFetcher.of({
-        getPackageJson: (pkg) =>
-          Effect.gen(function* () {
-            const response = yield* http.get(
-              `${JSDELIVR_CDN}/npm/${pkg.name}@${pkg.version}/package.json`
-            ).pipe(
-              Effect.flatMap((res) => res.json),
-              Effect.timeout("30 seconds"),
-              Effect.retry(retrySchedule),
-              Effect.mapError((e) => new NetworkError({
-                url: `${pkg.name}@${pkg.version}/package.json`,
-                message: String(e),
-              })),
-            )
-
-            return yield* Schema.decodeUnknown(PackageJson)(response).pipe(
-              Effect.mapError((e) => new ParseError({
-                source: `${pkg.name}@${pkg.version}/package.json`,
-                message: `Schema validation failed: ${e.message}`,
-              })),
-            )
-          }),
-        // ... other methods
-      })
-    })
-  )
+export const PackageFetcherLive: Layer.Layer<
+  PackageFetcher, never, HttpClient.HttpClient
+> = Layer.effect(PackageFetcher, Effect.gen(function* () {
+  const http = yield* HttpClient.HttpClient;
+  // ... fetchJson/fetchText helpers with retry + timeout
+  return { /* PackageFetcherShape implementation */ };
+}));
 ```
 
 ### TypeResolverLive
 
-Pure layer with no platform dependencies.
+Pure layer with no platform dependencies. Uses `Layer.succeed` directly.
 
 ```typescript
 // src/layers/TypeResolverLive.ts
 export const TypeResolverLive: Layer.Layer<TypeResolver> =
-  Layer.succeed(TypeResolver, TypeResolver.of({
+  Layer.succeed(TypeResolver, {
     resolveImport: (specifier, packageJson, pkg) => /* ... */,
     resolveMainEntry: (packageJson, pkg) => /* ... */,
     resolveTypeEntries: (packageJson, pkg) => /* ... */,
-  }))
+    findTypeDefinition: (jsFilePath, _packageJson, pkg) => /* ... */,
+  });
 ```
 
 ### TypeRegistryLive (Composed)
 
-Wires all services together. Platform-agnostic -- requires platform layers
-to be provided by the consumer.
+Merges all three service layers. Requires `FileSystem` and `HttpClient` from
+the platform.
 
 ```typescript
 // src/layers/TypeRegistryLive.ts
 export const TypeRegistryLive: Layer.Layer<
-  CacheService | PackageFetcher | TypeResolver | TypeScriptEnv,
+  CacheService | PackageFetcher | TypeResolver,
   never,
-  HttpClient.HttpClient | FileSystem.FileSystem
-> = Layer.mergeAll(
-  CacheServiceLive,
-  PackageFetcherLive,
-  TypeResolverLive,
-  TypeScriptEnvLive,
-)
+  FileSystem.FileSystem | HttpClient.HttpClient
+> = Layer.mergeAll(CacheServiceLive, PackageFetcherLive, TypeResolverLive);
 ```
+
+Note: `TypeScriptEnv` is not included in `TypeRegistryLive` since it has not
+been implemented yet (see Phase 4 in Implementation Status).
 
 ---
 
-## Platform Abstraction
+## Platform Support
 
-### Node.js Platform
+### Node.js Platform -- IMPLEMENTED
 
 ```typescript
 // src/platforms/node.ts
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node"
-import { Layer, ManagedRuntime } from "effect"
+import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
 
-/** Full Node.js layer stack */
 export const NodeLayer = TypeRegistryLive.pipe(
   Layer.provide(NodeFileSystem.layer),
   Layer.provide(NodeHttpClient.layerUndici),
-  Layer.provide(NodeTypeScriptEnvLive),
-  Layer.provide(NodeCacheServiceLive),
-)
-
-/** ManagedRuntime for convenience API */
-const runtime = ManagedRuntime.make(NodeLayer)
-
-/** Promise-based convenience API for non-Effect consumers */
-export const fetchAndCache = (pkg: PackageSpec): Promise<void> =>
-  runtime.runPromise(TypeRegistry.fetchAndCache(pkg))
-
-export const getVFS = (
-  packages: ReadonlyArray<PackageSpec>,
-): Promise<VirtualFileSystem> =>
-  runtime.runPromise(TypeRegistry.getVFS(packages))
-
-export const createTypeScriptCache = (
-  packages: ReadonlyArray<PackageSpec>,
-  compilerOptions: import("typescript").CompilerOptions,
-): Promise<Map<string, VirtualTypeScriptEnvironment>> =>
-  runtime.runPromise(TypeRegistry.createTypeScriptCache(packages, compilerOptions))
+);
 ```
 
-#### NodeCacheServiceLive
+The Node platform module also provides a Promise convenience API that wraps
+TypeRegistry namespace functions:
 
-Uses `@effect/platform` FileSystem with XDG-compliant paths.
+- `hasCached(pkg)` -- check if a package is cached
+- `fetchAndCache(pkg, options?)` -- fetch and cache type definitions
+- `getVFS(packages, options?)` -- get combined VFS for multiple packages
+- `resolveVersion(name, ref)` -- resolve version reference
+- `createTypeScriptCache(packages, compilerOptions)` -- create TypeScript
+  virtual environment (uses `@typescript/vfs` directly, not via a service)
 
-```typescript
-// src/layers/node/NodeCacheServiceLive.ts
-import { FileSystem } from "@effect/platform"
+The `createTypeScriptCache` function currently uses `@typescript/vfs` APIs
+(`createFSBackedSystem`, `createDefaultMapFromNodeModules`,
+`createVirtualTypeScriptEnvironment`) inline rather than through a
+`TypeScriptEnv` service abstraction. This is planned for Phase 4.
 
-export const makeNodeCacheLayer = (baseDir?: string): Layer.Layer<CacheService, never, FileSystem.FileSystem> =>
-  Layer.effect(
-    CacheService,
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem
-      const cacheDir = baseDir ?? getDefaultCacheDir()
+### Browser Platform -- PLANNED
 
-      return CacheService.of({
-        exists: (pkg) =>
-          fs.exists(Path.join(cacheDir, `${pkg.name}@${pkg.version}`)).pipe(
-            Effect.catchAll(() => Effect.succeed(false)),
-          ),
-        read: (pkg, filePath) =>
-          fs.readFileString(Path.join(cacheDir, `${pkg}`, filePath)).pipe(
-            Effect.mapError((e) => new CacheError({
-              operation: "read",
-              path: filePath,
-              message: String(e),
-            })),
-          ),
-        // ... other methods
-      })
-    })
-  )
-
-export const NodeCacheServiceLive = makeNodeCacheLayer()
-```
-
-#### NodeTypeScriptEnvLive
-
-Uses `createFSBackedSystem` and `createDefaultMapFromNodeModules`.
-
-```typescript
-// src/layers/node/NodeTypeScriptEnvLive.ts
-import {
-  createDefaultMapFromNodeModules,
-  createFSBackedSystem,
-  createVirtualTypeScriptEnvironment,
-} from "@typescript/vfs"
-import * as ts from "typescript"
-
-export const NodeTypeScriptEnvLive: Layer.Layer<TypeScriptEnv> =
-  Layer.succeed(TypeScriptEnv, TypeScriptEnv.of({
-    createEnvironment: (vfs, compilerOptions) =>
-      Effect.sync(() => {
-        const sys = createFSBackedSystem(vfs, process.cwd(), ts)
-        const rootFiles = Array.from(vfs.keys()).filter(
-          (p) => p.endsWith(".d.ts") || p.endsWith(".d.mts") || p.endsWith(".d.cts"),
-        )
-        return createVirtualTypeScriptEnvironment(sys, rootFiles, ts, compilerOptions)
-      }),
-
-    getLibFiles: (compilerOptions) =>
-      Effect.sync(() => createDefaultMapFromNodeModules(compilerOptions, ts)),
-  }))
-```
-
-### Browser Platform
-
-```typescript
-// src/platforms/browser.ts
-import { BrowserHttpClient } from "@effect/platform-browser"
-import { Layer, ManagedRuntime } from "effect"
-
-/** Full browser layer stack */
-export const BrowserLayer = TypeRegistryLive.pipe(
-  Layer.provide(BrowserHttpClient.layerXMLHttpRequest),
-  Layer.provide(BrowserTypeScriptEnvLive),
-  Layer.provide(BrowserCacheServiceLive),
-)
-
-/** ManagedRuntime for convenience API */
-const runtime = ManagedRuntime.make(BrowserLayer)
-
-/** Promise-based convenience API */
-export const fetchAndCache = (pkg: PackageSpec): Promise<void> =>
-  runtime.runPromise(TypeRegistry.fetchAndCache(pkg))
-// ... etc
-```
-
-#### BrowserCacheServiceLive
-
-Uses IndexedDB for large VFS data, with localStorage fallback. Follows
-the lzstring compression pattern from `@typescript/vfs`.
-
-```typescript
-// src/layers/browser/BrowserCacheServiceLive.ts
-export const BrowserCacheServiceLive: Layer.Layer<CacheService> =
-  Layer.effect(
-    CacheService,
-    Effect.gen(function* () {
-      // Open IndexedDB database
-      const db = yield* openDatabase("type-registry-cache", 1)
-
-      return CacheService.of({
-        exists: (pkg) =>
-          Effect.tryPromise({
-            try: () => db.get("packages", pkg.toString()),
-            catch: (e) => new CacheError({
-              operation: "read",
-              path: pkg.toString(),
-              message: String(e),
-            }),
-          }).pipe(Effect.map((result) => result !== undefined)),
-
-        write: (pkg, filePath, content) =>
-          Effect.tryPromise({
-            try: () => db.put("files", content, `${pkg}/${filePath}`),
-            catch: (e) => new CacheError({
-              operation: "write",
-              path: `${pkg}/${filePath}`,
-              message: String(e),
-            }),
-          }).pipe(Effect.asVoid),
-
-        // ... other methods using IndexedDB
-      })
-    })
-  )
-```
-
-#### BrowserTypeScriptEnvLive
-
-Uses `createSystem` (pure Map-based, no filesystem) and
-`createDefaultMapFromCDN` for lib files. Follows the caching pattern from
-`@typescript/vfs` with optional lzstring compression.
-
-```typescript
-// src/layers/browser/BrowserTypeScriptEnvLive.ts
-import {
-  createDefaultMapFromCDN,
-  createSystem,
-  createVirtualTypeScriptEnvironment,
-} from "@typescript/vfs"
-import * as ts from "typescript"
-
-export const BrowserTypeScriptEnvLive: Layer.Layer<TypeScriptEnv> =
-  Layer.succeed(TypeScriptEnv, TypeScriptEnv.of({
-    createEnvironment: (vfs, compilerOptions) =>
-      Effect.sync(() => {
-        const sys = createSystem(vfs)
-        const rootFiles = Array.from(vfs.keys()).filter(
-          (p) => p.endsWith(".d.ts") || p.endsWith(".d.mts") || p.endsWith(".d.cts"),
-        )
-        return createVirtualTypeScriptEnvironment(sys, rootFiles, ts, compilerOptions)
-      }),
-
-    getLibFiles: (compilerOptions) =>
-      Effect.tryPromise({
-        try: () => createDefaultMapFromCDN(
-          compilerOptions,
-          ts.version,
-          true,  // enable caching
-          ts,
-          // lzstring imported dynamically for compression
-        ),
-        catch: (e) => new NetworkError({
-          url: "typescript CDN",
-          message: `Failed to fetch lib files: ${String(e)}`,
-        }),
-      }),
-  }))
-```
-
-### Package Exports Configuration
-
-```json
-{
-  "exports": {
-    ".": {
-      "types": "./dist/npm/index.d.ts",
-      "import": "./dist/npm/index.js"
-    },
-    "./node": {
-      "types": "./dist/npm/platforms/node.d.ts",
-      "import": "./dist/npm/platforms/node.js"
-    },
-    "./browser": {
-      "types": "./dist/npm/platforms/browser.d.ts",
-      "import": "./dist/npm/platforms/browser.js"
-    }
-  }
-}
-```
+Not yet implemented. See Phase 5 in Implementation Status.
 
 ---
 
 ## Public API
 
-### Core Module (Platform-Agnostic)
+### Core Module
 
-The main export exposes composable Effect programs and all types:
+The main export (`src/index.ts`) exposes:
 
 ```typescript
-// src/index.ts
-
 // Namespace modules
-export * as TypeRegistry from "./TypeRegistry.js"
-export * as VirtualPackage from "./VirtualPackage.js"
+export * as TypeRegistry from "./TypeRegistry.js";
+export * as VirtualPackage from "./VirtualPackage.js";
 
-// Data types
-export { PackageSpec, PackageSpecBase } from "./schemas/PackageSpec.js"
-export { CacheMetadata } from "./schemas/CacheMetadata.js"
-export { PackageJson } from "./schemas/PackageJson.js"
-export { ResolvedModule, ResolvedModuleBase } from "./schemas/ResolvedModule.js"
+// Schemas
+export { CacheMetadata } from "./schemas/CacheMetadata.js";
+export { FileTreeEntry, FileTreeResponse } from "./schemas/FileTree.js";
+export { PackageJson } from "./schemas/PackageJson.js";
+export { PackageSpec } from "./schemas/PackageSpec.js";
+export { ResolvedModule } from "./schemas/ResolvedModule.js";
 
-// Errors (with *Base for DTS bundling)
-export { CacheError, CacheErrorBase } from "./errors/CacheError.js"
-export { NetworkError, NetworkErrorBase } from "./errors/NetworkError.js"
-export { PackageNotFoundError, PackageNotFoundErrorBase } from "./errors/PackageNotFoundError.js"
-export { ParseError, ParseErrorBase } from "./errors/ParseError.js"
-export { ResolutionError, ResolutionErrorBase } from "./errors/ResolutionError.js"
-export { TimeoutError, TimeoutErrorBase } from "./errors/TimeoutError.js"
-export type { TypeRegistryError } from "./errors/index.js"
+// Errors (with *Base for DTS bundling via errors/index.ts barrel)
+export type { TypeRegistryError } from "./errors/index.js";
+export {
+  CacheError, NetworkError, PackageNotFoundError,
+  ParseError, ResolutionError, TimeoutError,
+} from "./errors/index.js";
 
-// Services (Context.Tag definitions)
-export { CacheService } from "./services/CacheService.js"
-export { PackageFetcher } from "./services/PackageFetcher.js"
-export { TypeResolver } from "./services/TypeResolver.js"
-export { TypeScriptEnv } from "./services/TypeScriptEnv.js"
+// Services (Context.Tag definitions + Shape types)
+export { CacheService, type CacheServiceShape, type VirtualFileSystem }
+  from "./services/CacheService.js";
+export { PackageFetcher, type PackageFetcherShape }
+  from "./services/PackageFetcher.js";
+export { TypeResolver, type TypeResolverShape }
+  from "./services/TypeResolver.js";
 
-// Layers (composable building blocks)
-export { PackageFetcherLive } from "./layers/PackageFetcherLive.js"
-export { TypeResolverLive } from "./layers/TypeResolverLive.js"
-export { TypeRegistryLive } from "./layers/TypeRegistryLive.js"
+// Layers
+export { CacheServiceLive, makeNodeCacheLayer }
+  from "./layers/CacheServiceLive.js";
+export { PackageFetcherLive } from "./layers/PackageFetcherLive.js";
+export { TypeRegistryLive } from "./layers/TypeRegistryLive.js";
+export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 
-// Re-export VirtualTypeScriptEnvironment for consumers
-export type { VirtualTypeScriptEnvironment } from "@typescript/vfs"
+// Events
+export type { LogEvent, LogEventHandler } from "./events.js";
+export { LogEventSchema, createLogEvent } from "./events.js";
+
+// External types
+export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
+
+// Utilities
+export { getDefaultCacheDir } from "./utils/xdg.js";
 ```
+
+Note: The `*Base` exports (`CacheErrorBase`, `NetworkErrorBase`, etc.) are
+re-exported from `src/errors/index.ts` but not directly from the main
+`src/index.ts`. They are accessible via the errors barrel.
 
 ### TypeRegistry Namespace Module
 
-Composable Effect programs -- the core API:
+`TypeRegistry` is a namespace module of pure functions (not a class). Each
+function returns a composable `Effect<A, E, R>`:
 
-```typescript
-// src/TypeRegistry.ts
-import { Effect } from "effect"
+- `hasCached(pkg)` -- check if a package is cached
+- `fetchAndCache(pkg, options?)` -- fetch and cache type definitions
+- `getPackageVFS(pkg, options?)` -- get VFS for a single package
+- `getVFS(packages, options?)` -- get combined VFS for multiple packages
+- `resolveImport(pkg, specifier)` -- resolve an import specifier
+- `getTypeEntries(pkg)` -- get all type entry points
+- `resolveVersion(name, ref)` -- resolve a version reference
+- `clearCache(pkg)` -- remove a package from cache
 
-/** Check if a package is cached */
-export const hasCached = (pkg: PackageSpec): Effect.Effect<
-  boolean,
-  CacheError,
-  CacheService
-> =>
-  Effect.gen(function* () {
-    const cache = yield* CacheService
-    return yield* cache.exists(pkg)
-  })
+### VirtualPackage
 
-/** Fetch and cache a package's type definitions */
-export const fetchAndCache = (pkg: PackageSpec): Effect.Effect<
-  void,
-  NetworkError | ParseError | CacheError,
-  CacheService | PackageFetcher
-> =>
-  Effect.gen(function* () {
-    const cache = yield* CacheService
-    const fetcher = yield* PackageFetcher
+`VirtualPackage` is a class for generating transient VFS entries from
+declaration content (not cached, not an Effect service). Supports single-entry
+and multi-entry packages:
 
-    const exists = yield* cache.exists(pkg)
-    if (exists) {
-      const metadata = yield* cache.readMetadata(pkg)
-      if (metadata.ttl && (Date.now() - metadata.cachedAt) < metadata.ttl) {
-        return
-      }
-    }
-
-    const packageJson = yield* fetcher.getPackageJson(pkg)
-    const typeFiles = yield* fetcher.getTypeFiles(pkg)
-
-    yield* cache.write(pkg, "package.json", JSON.stringify(packageJson, null, 2))
-    yield* Effect.forEach(typeFiles, ([path, content]) => {
-      const normalized = path.replace(/^\//, "")
-      return normalized !== "package.json"
-        ? cache.write(pkg, normalized, content)
-        : Effect.void
-    })
-
-    yield* cache.writeMetadata(pkg, new CacheMetadata({
-      version: pkg.version,
-      cachedAt: Date.now(),
-    }))
-  })
-
-/** Get combined VFS for multiple packages with graceful degradation */
-export const getVFS = (
-  packages: ReadonlyArray<PackageSpec>,
-  options?: { autoFetch?: boolean },
-): Effect.Effect<
-  VirtualFileSystem,
-  PackageNotFoundError,
-  CacheService | PackageFetcher
-> =>
-  Effect.gen(function* () {
-    const results = yield* Effect.forEach(
-      packages,
-      (pkg) => getPackageVFS(pkg, options).pipe(
-        Effect.map((vfs) => ({ pkg, vfs, error: null as TypeRegistryError | null })),
-        Effect.catchAll((error) =>
-          Effect.succeed({ pkg, vfs: new Map() as VirtualFileSystem, error })
-        ),
-      ),
-      { concurrency: 5 },
-    )
-
-    const failures = results.filter((r) => r.error !== null)
-    if (failures.length === packages.length && packages.length > 0) {
-      return yield* Effect.fail(new PackageNotFoundError({
-        name: packages.map((p) => p.toString()).join(", "),
-        version: "",
-        message: `All ${packages.length} packages failed to load`,
-      }))
-    }
-
-    const vfs: VirtualFileSystem = new Map()
-    for (const { vfs: pkgVfs } of results) {
-      for (const [path, content] of pkgVfs) {
-        vfs.set(path, content)
-      }
-    }
-    return vfs
-  })
-
-/** Create TypeScript environment cache for Twoslash */
-export const createTypeScriptCache = (
-  packages: ReadonlyArray<PackageSpec>,
-  compilerOptions: import("typescript").CompilerOptions,
-): Effect.Effect<
-  Map<string, VirtualTypeScriptEnvironment>,
-  TypeRegistryError,
-  CacheService | PackageFetcher | TypeScriptEnv
-> =>
-  Effect.gen(function* () {
-    const tsEnvService = yield* TypeScriptEnv
-
-    const vfs = yield* getVFS(packages, { autoFetch: true })
-    const libFiles = yield* tsEnvService.getLibFiles(compilerOptions)
-    for (const [path, content] of libFiles) {
-      vfs.set(path, content)
-    }
-
-    const env = yield* tsEnvService.createEnvironment(vfs, compilerOptions)
-
-    const cacheKey = JSON.stringify(compilerOptions)
-    const cache = new Map<string, VirtualTypeScriptEnvironment>()
-    cache.set(cacheKey, env)
-    return cache
-  })
-```
+- `VirtualPackage.create(name, version, declarations)` -- single entry
+- `VirtualPackage.createMultiEntry(name, version, entries)` -- multiple entries
+- `VirtualPackage.fromFile(name, version, filePath)` -- load from disk
+- `instance.generateVfs()` -- produce VFS map
 
 ### Consumer Examples
 
 **Effect consumer (full composition):**
 
 ```typescript
-import { Effect } from "effect"
-import * as TypeRegistry from "type-registry-effect"
-import { NodeLayer } from "type-registry-effect/node"
+import { Effect } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
 
 const program = Effect.gen(function* () {
-  const pkg = new TypeRegistry.PackageSpec({ name: "zod", version: "3.23.8" })
-  yield* TypeRegistry.TypeRegistry.fetchAndCache(pkg)
-  const vfs = yield* TypeRegistry.TypeRegistry.getVFS([pkg])
-  return vfs
+  const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
+  yield* TypeRegistry.fetchAndCache(pkg);
+  const vfs = yield* TypeRegistry.getVFS([pkg]);
+  return vfs;
 }).pipe(
   Effect.catchTag("NetworkError", (e) =>
     Effect.logError(`Network: ${e.message}`)
   ),
   Effect.provide(NodeLayer),
-)
+);
 
-Effect.runPromise(program)
+Effect.runPromise(program);
 ```
 
 **Promise consumer (Node.js convenience):**
 
 ```typescript
-import { fetchAndCache, getVFS } from "type-registry-effect/node"
-import { PackageSpec } from "type-registry-effect"
+import { fetchAndCache, getVFS } from "type-registry-effect/node";
+import { PackageSpec } from "type-registry-effect";
 
-const pkg = new PackageSpec({ name: "zod", version: "3.23.8" })
-await fetchAndCache(pkg)
-const vfs = await getVFS([pkg])
-```
-
-**Browser consumer:**
-
-```typescript
-import { createTypeScriptCache } from "type-registry-effect/browser"
-import { PackageSpec } from "type-registry-effect"
-
-const cache = await createTypeScriptCache(
-  [new PackageSpec({ name: "zod", version: "3.23.8" })],
-  { target: 99, module: 99, strict: false }
-)
+const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
+await fetchAndCache(pkg);
+const vfs = await getVFS([pkg]);
 ```
 
 ---
 
 ## Testing Strategy
 
-### Test Layers
+The test suite includes unit tests, integration tests, schema tests, layer
+tests, and error tests. Tests use layer-based dependency injection with
+`Effect.provide`.
 
-Following the patterns from semver-effect and runtime-resolver:
+### Directory Structure
 
-```typescript
-// __test__/utils/TestLayers.ts
-import { Layer, Effect } from "effect"
-
-/** Mock PackageFetcher that reads from fixtures */
-export const MockPackageFetcherLayer: Layer.Layer<PackageFetcher> =
-  Layer.succeed(PackageFetcher, PackageFetcher.of({
-    getPackageJson: (pkg) => Effect.sync(() => readFixture(pkg, "package.json")),
-    getTypeFiles: (pkg) => Effect.sync(() => readFixtureTypeFiles(pkg)),
-    resolveVersion: (name, ref) => Effect.succeed(ref),
-    // ...
-  }))
-
-/** In-memory cache for tests */
-export const InMemoryCacheLayer: Layer.Layer<CacheService> =
-  Layer.effect(
-    CacheService,
-    Effect.gen(function* () {
-      const store = new Map<string, string>()
-
-      return CacheService.of({
-        exists: (pkg) => Effect.succeed(store.has(`${pkg}/metadata`)),
-        read: (pkg, path) => {
-          const content = store.get(`${pkg}/${path}`)
-          return content
-            ? Effect.succeed(content)
-            : Effect.fail(new CacheError({ operation: "read", path, message: "Not found" }))
-        },
-        write: (pkg, path, content) =>
-          Effect.sync(() => { store.set(`${pkg}/${path}`, content) }),
-        // ...
-      })
-    })
-  )
-
-/** Full test layer (no network, no filesystem) */
-export const TestLayer = Layer.mergeAll(
-  MockPackageFetcherLayer,
-  InMemoryCacheLayer,
-  TypeResolverLive,
-)
-
-/** Helper to run effects in tests */
-export const runTest = <A, E>(effect: Effect.Effect<A, E, CacheService | PackageFetcher | TypeResolver>) =>
-  Effect.runPromise(Effect.provide(effect, TestLayer))
+```text
+__test__/
+  PackageFetcher.test.ts       -- PackageFetcher layer tests
+  VirtualPackage.test.ts       -- VirtualPackage utility tests
+  CacheService.test.ts         -- CacheService tests
+  TypeResolver.test.ts         -- TypeResolver layer tests
+  TypeRegistry.unit.test.ts    -- TypeRegistry namespace unit tests
+  TypeRegistry.integration.test.ts -- Integration tests (live network)
+  xdg.test.ts                  -- XDG cache directory tests
+  schemas/
+    PackageSpec.test.ts
+    CacheMetadata.test.ts
+    FileTree.test.ts
+    PackageJson.test.ts
+    ResolvedModule.test.ts
+  errors/
+    errors.test.ts
+  layers/
+    CacheServiceLive.test.ts
+  fixtures/                    -- Test fixture packages
+    zod/
+    ts-pattern/
+    @effect/schema/
 ```
 
-### Test Structure
+### Test Patterns
+
+Tests follow the layer-based testing pattern: mock services are provided via
+`Layer.succeed` or `Layer.effect`, then composed with real layers under test.
 
 ```typescript
-// __test__/TypeRegistry.test.ts
-import { Effect } from "effect"
-import { runTest, TestLayer } from "./utils/TestLayers.js"
-
-describe("fetchAndCache", () => {
-  it("should fetch and cache a package", async () => {
-    const pkg = new PackageSpec({ name: "zod", version: "3.22.4" })
-    const result = await runTest(
-      Effect.gen(function* () {
-        yield* TypeRegistry.fetchAndCache(pkg)
-        return yield* TypeRegistry.hasCached(pkg)
-      })
-    )
-    expect(result).toBe(true)
-  })
-
-  it("should fail with NetworkError for unavailable package", async () => {
-    const pkg = new PackageSpec({ name: "nonexistent", version: "1.0.0" })
-    const error = await Effect.runPromise(
-      TypeRegistry.fetchAndCache(pkg).pipe(
-        Effect.provide(TestLayer),
-        Effect.flip,  // flip to get the error
-      )
-    )
-    expect(error._tag).toBe("NetworkError")
-  })
-})
+// Example: unit test with mock services
+const program = TypeRegistry.fetchAndCache(pkg).pipe(
+  Effect.provide(Layer.mergeAll(MockCacheLayer, MockFetcherLayer)),
+);
+await Effect.runPromise(program);
 ```
 
 ---
 
-## Migration Path
+## Future Work
 
-### Phase 1: Data & Errors
+### Phase 4: TypeScriptEnv Service (Planned)
 
-1. Create `src/schemas/` with `Data.TaggedClass` and `Schema` types
-2. Create `src/errors/` with `Data.TaggedError` types
-3. Update existing services to use new types internally
-4. Build and test pass with existing API
+Abstract the TypeScript environment creation behind a service interface to
+enable browser support and testability:
 
-### Phase 2: Service Refactoring
+- Create `TypeScriptEnv` service with `*Shape` interface
+- Implement `NodeTypeScriptEnvLive` (uses `createFSBackedSystem` +
+  `createDefaultMapFromNodeModules`)
+- Refactor `createTypeScriptCache` from inline `@typescript/vfs` usage to
+  service-based
+- Add `TypeScriptEnv` to `TypeRegistryLive` composed layer
 
-1. Convert `PackageFetcherLive` and `TypeResolverLive` from `Effect` to `Layer`
-2. Add Schema validation to CDN response parsing
-3. Replace `Error` with tagged errors in service methods
-4. Remove `FileSystem.FileSystem` and `HttpClient.HttpClient` from service
-   interface signatures (close over them in layers)
-5. Build and test pass
+### Phase 5: Browser Support (Planned)
 
-### Phase 3: Remove TypeRegistry Class
+Requires Phase 4 completion:
 
-1. Create `src/TypeRegistry.ts` as namespace module with Effect programs
-2. Create `src/layers/TypeRegistryLive.ts` composed layer
-3. Create `src/platforms/node.ts` with `NodeLayer` + Promise API
-4. Update tests to use layer-based testing
-5. Remove old `TypeRegistry` class
-6. Build and test pass
+- `BrowserCacheServiceLive` using IndexedDB
+- `BrowserTypeScriptEnvLive` using `createSystem` + `createDefaultMapFromCDN`
+- `src/platforms/browser.ts` with `BrowserLayer` + Promise API
+- Package exports: `./browser` entry point
 
-### Phase 4: TypeScriptEnv Service
+### semver-effect Integration (Planned)
 
-1. Create `TypeScriptEnv` service interface
-2. Implement `NodeTypeScriptEnvLive`
-3. Update `createTypeScriptCache` to use the service
-4. Build and test pass
+The `semver-effect` package is declared as a runtime dependency but is not yet
+used in source code. Planned integration points:
 
-### Phase 5: Browser Support
+- Replace raw string-based version resolution in `PackageFetcher.resolveVersion`
+  with `semver-effect` operations
+- Use semver range parsing and satisfaction checking for version matching
 
-1. Implement `BrowserCacheServiceLive` (IndexedDB)
-2. Implement `BrowserTypeScriptEnvLive` (CDN lib files + `createSystem`)
-3. Create `src/platforms/browser.ts` with `BrowserLayer` + Promise API
-4. Add browser-specific tests
-5. Configure package.json conditional exports
+### Structured Logging Integration
+
+The `events.ts` module defines Schema-validated log events but they are not
+yet wired into the TypeRegistry operations. Integration with Effect's
+structured logging system is planned.
 
 ---
 
 ## Related Documentation
 
 - **Observability:** `./observability.md` -- event system, metrics,
-  fault tolerance patterns (to be updated for Effect logging integration)
+  fault tolerance patterns
 - **Cache Optimization:** `./cache-optimization.md` -- performance
-  characteristics (to be populated after refactoring)
+  characteristics
 - **Package README:** `README.md`
-- **semver-effect:** `../semver-effect/` -- reference implementation for
-  Data/Error/Service/Layer patterns
-- **runtime-resolver:** `../runtime-resolver/` -- reference implementation
-  for multi-layer composition and Promise convenience API
 
 ### External References
 
@@ -1192,4 +883,3 @@ describe("fetchAndCache", () => {
 - Effect Schema: <https://effect.website/docs/schema/introduction>
 - @typescript/vfs: <https://github.com/microsoft/TypeScript-Website/tree/v2/packages/typescript-vfs>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>
-- @effect/platform-browser: <https://github.com/Effect-TS/effect/tree/main/packages/platform-browser>
