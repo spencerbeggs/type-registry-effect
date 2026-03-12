@@ -41,6 +41,9 @@
  * @packageDocumentation
  */
 
+// External types — re-exported here (not from main entry) because
+// @typescript/vfs is an optional peer dependency
+export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 export { type CacheError, CacheErrorBase } from "./errors/CacheError.js";
 export { type NetworkError, NetworkErrorBase } from "./errors/NetworkError.js";
 export { type PackageNotFoundError, PackageNotFoundErrorBase } from "./errors/PackageNotFoundError.js";

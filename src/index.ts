@@ -95,10 +95,6 @@ export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 export type { LogEvent, LogEventHandler } from "./events.js";
 export { LogEventSchema, createLogEvent } from "./events.js";
 
-// ── External types ──────────────────────────────────────────────────────────
-
-export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
-
 // ── Utilities ───────────────────────────────────────────────────────────────
 
 export { getDefaultCacheDir } from "./utils/xdg.js";
