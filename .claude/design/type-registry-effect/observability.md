@@ -3,9 +3,9 @@ status: current
 module: type-registry-effect
 category: observability
 created: 2026-01-17
-updated: 2026-03-11
-last-synced: 2026-03-11
-completeness: 90
+updated: 2026-03-17
+last-synced: 2026-03-17
+completeness: 95
 related:
   - ./architecture.md
   - ./cache-optimization.md
@@ -20,16 +20,18 @@ dependencies: []
 
 The package uses a **schema-based event system** built with Effect Schema.
 Instead of logging directly from services, `TypeRegistry` emits structured
-events at key lifecycle points. Consumers receive events via a callback and
-can format them however they need.
+events at key lifecycle points via `Effect.log` and `Effect.annotateLogs`.
+Consumers receive events by providing a custom `Logger` layer -- the standard
+Effect pattern for log interception.
 
 **Key Benefits:**
 
-- Zero Effect dependency for consumers (just a callback function)
+- Fully Effect-native: uses `Effect.log` + `Effect.annotateLogs` (no callback)
 - Runtime type validation with Effect Schema
-- Three distinct output modes without code duplication
-- Clean separation between business logic and logging
-- LLM-friendly structured JSON output in DEBUG mode
+- Log level filtering with no code duplication
+- Clean separation between business logic and logging -- services remain
+  logging-free
+- Consumers intercept events via Effect's Logger layer
 
 ### Event Schema Definition
 
@@ -71,8 +73,10 @@ export const LogEventSchema = Schema.Union(
 );
 
 export type LogEvent = Schema.Schema.Type<typeof LogEventSchema>;
-export type LogEventHandler = (event: LogEvent) => void;
 ```
+
+Note: `LogEventHandler` has been removed. The callback-based handler model
+was replaced by the Effect-native `Effect.log` + Logger layer approach.
 
 **Event Types:**
 
@@ -81,198 +85,118 @@ export type LogEventHandler = (event: LogEvent) => void;
 3. `cache.miss` - Package not in cache, needs fetching
 4. `cache.stale` - Package in cache but TTL expired
 5. `package.fetch.start` - HTTP download started
-6. `package.loaded` - Package successfully loaded
+6. `package.loaded` - Package successfully loaded (includes `durationMs`)
 7. `package.load.failed` - Package failed to load
 8. `packages.batch.start` - Batch fetch started
 9. `packages.batch.complete` - Batch fetch completed
 10. `typescript.cache.created` - TypeScript in-memory cache created from VFS data
 
-### Event Creation
-
-Events are created using the `createLogEvent` helper, which decodes unknown
-data through `LogEventSchema` synchronously:
-
-```typescript
-// src/events.ts
-export function createLogEvent(event: unknown): LogEvent {
-  return Schema.decodeUnknownSync(LogEventSchema)(event);
-}
-```
-
 ### Integration Status
 
-The `events.ts` module defines Schema-validated log events and the
-`createLogEvent` factory, but these are **not yet wired into** the
-`TypeRegistry` namespace operations. The event infrastructure is exported for
-consumers to use in their own integrations.
+Log events are **wired into** `TypeRegistry` namespace programs via
+`Effect.log` with structured annotations. Services remain logging-free --
+all `Effect.log*` calls live exclusively in `src/TypeRegistry.ts`.
 
-**Services remain logging-free.** All `Effect.log*` calls have been removed from:
+**Emission points by function:**
 
-- `CacheService` - No logging in cache operations
-- `PackageFetcher` - No logging in HTTP requests
-- `TypeResolver` - No logging in type resolution
+- `fetchAndCache` -- emits `package.fetch.start` (debug)
+- `getPackageVFS` -- emits `cache.hit` (info), `cache.miss` (debug),
+  `cache.stale` (debug), `package.loaded` (info with `durationMs`,
+  `files`, `source`)
+- `getVFS` -- emits `packages.batch.start` (debug),
+  `package.load.failed` (warn), `packages.batch.complete` (info with
+  `loaded`, `failed`, `total`, `totalFiles`, `durationMs`)
+- `resolveVersion` -- emits `package.version.resolved` (info)
 
-This keeps business logic clean and testable.
+**Services remain logging-free:**
 
-Note: The `TypeRegistry` module is a **namespace of composable Effect programs**
-(not a class). There is no `TypeRegistry.create()` or instance-based
-configuration. Event handling integration is planned as a future layer-based
-composition pattern.
+- `CacheService` -- no logging in cache operations
+- `PackageFetcher` -- no logging in HTTP requests
+- `TypeResolver` -- no logging in type resolution
 
-### Three-Mode Event Handler (External Consumer Example)
+This keeps business logic clean and independently testable.
 
-The following shows how an external consumer (`rspress-plugin-api-extractor`)
-could implement a smart event handler with three modes. This is aspirational
-documentation -- the event system is not yet wired into TypeRegistry operations.
+### Consumer Logger Integration
 
-**INFO Mode (default):**
-
-- Suppresses all TypeRegistry events
-- Only shows high-level plugin summaries
-
-**VERBOSE Mode:**
-
-- Human-friendly formatted output with indentation
-- Shows progress for each package
-- Displays version resolutions and cache status
-
-**DEBUG Mode:**
-
-- Structured JSON for LLM consumption
-- All event data preserved
+Consumers receive events by providing a custom `Logger` layer -- the
+standard Effect pattern. The `TypeRegistry` module is a namespace of
+composable Effect programs (not a class), so there is no instance-based
+configuration. Log interception is done entirely through the Effect layer
+system:
 
 ```typescript
-// pkgs/rspress-plugin-api-extractor/src/type-registry-loader.ts
-private handleLogEvent(event: LogEvent): void {
-  if (!this.logger) {
-    return;
-  }
+import { Effect, Logger, LogLevel } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
 
-  if (this.logger.isDebug()) {
-    // In debug mode, emit structured JSON for LLM consumption
-    this.logger.debug(JSON.stringify(event));
-    return;
-  }
+// Custom logger that prints structured JSON for each log message
+const jsonLogger = Logger.make(({ logLevel, message, annotations }) => {
+  console.log(JSON.stringify({ level: logLevel.label, message, ...annotations }));
+});
 
-  if (!this.logger.isVerbose()) {
-    // In info mode, suppress all TypeRegistry events
-    // (Plugin shows high-level summaries instead)
-    return;
-  }
-
-  // Verbose mode: Human-friendly output
-  switch (event.event) {
-    case "package.version.resolved": {
-      const { package: pkg, requested, resolved } = event.data;
-      if (requested !== resolved) {
-        this.logger.verbose(`   Resolved ${pkg}: ${requested} → ${resolved}`);
-      }
-      break;
-    }
-
-    case "cache.hit": {
-      const { package: pkg, version, ageMinutes } = event.data;
-      this.logger.verbose(`   ✓ ${pkg}@${version} (cached, ${ageMinutes}m old)`);
-      break;
-    }
-
-    case "cache.miss": {
-      const { package: pkg, version } = event.data;
-      this.logger.verbose(`   Fetching ${pkg}@${version}...`);
-      break;
-    }
-
-    case "package.loaded": {
-      const { package: pkg, version, files, source } = event.data;
-      const sourceLabel = source === "cache" ? "cached" : "downloaded";
-      this.logger.verbose(`   ✓ Loaded ${pkg}@${version} (${files} files, ${sourceLabel})`);
-      break;
-    }
-
-    // ... (9 total cases)
-  }
-}
-```
-
-### Example Output
-
-**INFO mode (clean):**
-
-```text
-✅ Successfully loaded types for 2 package(s)
-```
-
-**VERBOSE mode (human-friendly):**
-
-```text
-📦 Loading types for 2 external package(s)...
-   Fetching zod@3.22.4...
-   ✓ Loaded zod@3.22.4 (24 files, downloaded)
-   Fetching ts-pattern@5.0.1...
-   ✓ Loaded ts-pattern@5.0.1 (12 files, downloaded)
-   Completed: 2 packages loaded (36 files, 1.23s)
-```
-
-**DEBUG mode (structured JSON):**
-
-```json
-{"event":"cache.miss","level":"debug","message":"Cache miss for zod@3.22.4","timestamp":1705334400000,"data":{"package":"zod","version":"3.22.4"}}
-{"event":"package.loaded","level":"info","message":"Loaded zod@3.22.4","timestamp":1705334401234,"data":{"package":"zod","version":"3.22.4","files":24,"source":"network"}}
+const program = Effect.gen(function* () {
+  const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
+  return yield* TypeRegistry.getVFS([pkg]);
+}).pipe(
+  Effect.provide(NodeLayer),
+  Effect.provide(Logger.replace(Logger.defaultLogger, jsonLogger)),
+  // Optionally filter by log level:
+  Effect.provide(Logger.minimumLogLevel(LogLevel.Debug)),
+);
 ```
 
 ## 2. Metrics & Telemetry
 
-### Metrics to Track
+### Effect Metrics Module
 
-**Performance Metrics:**
+`src/metrics.ts` defines all metrics using `effect/Metric`. Metrics are
+exported as named constants and used directly in `src/TypeRegistry.ts`.
 
-- HTTP request duration (p50, p95, p99)
-- Cache operation duration
-- VFS generation time
-- Total package fetch time
+**Counters (5):**
 
-**Resource Metrics:**
+| Export | Metric name | Incremented when |
+| :--- | :--- | :--- |
+| `cacheHits` | `type_registry_cache_hits_total` | `getPackageVFS` finds a valid cache entry |
+| `cacheMisses` | `type_registry_cache_misses_total` | `getPackageVFS` finds no cache entry |
+| `cacheStale` | `type_registry_cache_stale_total` | `getPackageVFS` finds an expired cache entry |
+| `packagesLoaded` | `type_registry_packages_loaded_total` | `getPackageVFS` completes successfully |
+| `packagesFailed` | `type_registry_packages_failed_total` | `getVFS` records a per-package failure |
 
-- Cache size (MB)
-- Number of cached packages
-- Cache hit rate (%)
-- Network bandwidth usage
+**Timer histograms (2):**
 
-**Error Metrics:**
+| Export | Metric name | Wraps |
+| :--- | :--- | :--- |
+| `packageLoadDuration` | `type_registry_package_load_duration` | `getPackageVFS` via `Metric.trackDuration` |
+| `batchDuration` | `type_registry_batch_duration` | `getVFS` via `Metric.trackDuration` |
 
-- HTTP error rate by status code
-- Cache error rate
-- Resolution failure rate
+### Reading Metrics
 
-### Implementation with Effect Metrics
+Metrics are accumulated in the Effect Metrics registry and can be read
+programmatically or exported to any OpenTelemetry-compatible sink:
 
 ```typescript
-import * as Metric from "effect/Metric"
+import { Effect, Metric } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
+import { cacheHits, cacheMisses } from "type-registry-effect/metrics";
 
-// Define metrics
-const fetchDuration = Metric.histogram("package_fetch_duration_ms", {
-  description: "Time to fetch package from CDN",
-  boundaries: [100, 500, 1000, 5000, 10000]
-})
+const program = Effect.gen(function* () {
+  const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
+  yield* TypeRegistry.getVFS([pkg]);
 
-const cacheHitRate = Metric.counter("cache_hits_total")
-const cacheMissRate = Metric.counter("cache_misses_total")
-
-// Use in code
-yield* Effect.log("Fetching package").pipe(
-  Effect.withMetric(fetchDuration),
-  Effect.annotateSpans("package", pkg.name)
-)
-
-// Export metrics for Prometheus/OpenTelemetry
+  const hits = yield* Metric.value(cacheHits);
+  const misses = yield* Metric.value(cacheMisses);
+  console.log({ hits: hits.count, misses: misses.count });
+}).pipe(Effect.provide(NodeLayer));
 ```
 
-### Distributed Tracing
+### Distributed Tracing (Planned)
+
+OpenTelemetry span instrumentation is not yet implemented. Planned
+integration points:
 
 ```typescript
-import * as Tracer from "effect/Tracer"
-
-// Add spans for major operations
+// Aspirational: spans for major operations
 yield* Effect.withSpan("fetchAndCache", {
   attributes: { package: pkg.name, version: pkg.version }
 })(
@@ -551,18 +475,21 @@ includes `"list"` as an operation type. `NetworkError` uses `status?: number`
 
 ## Current Implementation
 
-The package currently implements essential fault tolerance and observability
-features:
+The package currently implements full observability and essential fault
+tolerance features:
 
 **Implemented:**
 
-- Event-based observability with structured schema
-- HTTP retry with exponential backoff (3 retries, 1s initial delay, 2x backoff)
+- Structured log events wired into TypeRegistry programs via
+  `Effect.log` + `Effect.annotateLogs` (10 event types, Schema-validated)
+- Effect Metrics module (`src/metrics.ts`) with 5 counters and 2 timer
+  histograms, all actively incremented/tracked in TypeRegistry programs
+- HTTP retry with exponential backoff (3 retries, 1s initial delay, 2x
+  backoff)
 - Request timeouts (30s for package.json, 60s for files)
 - Graceful error handling with partial success support
-- Cache event tracking (hits, misses, stale)
-- Version resolution tracking
-- Package loading lifecycle events
+- New test files: `__test__/TypeRegistry.logging.test.ts` and
+  `__test__/metrics.test.ts`
 
 **Error Handling:**
 
@@ -572,13 +499,6 @@ features:
 - Partial failures: Return successful packages, log failures
 
 ## Future Enhancements
-
-### Metrics & Monitoring
-
-- Cache hit/miss rates
-- Request duration histograms
-- Error rate by type
-- Concurrency metrics
 
 ### Advanced Fault Tolerance
 

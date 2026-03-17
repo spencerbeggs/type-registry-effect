@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-03-11
-last-synced: 2026-03-11
+updated: 2026-03-17
+last-synced: 2026-03-17
 completeness: 90
 related:
   - ./observability.md
@@ -97,7 +97,12 @@ composable Effect programs.
   (fully closed) and Promise-returning wrappers
 - `VirtualPackage` utility class for transient VFS generation
 - Structured log event system using Effect Schema (10 event types)
-- Comprehensive test suite (unit, integration, schema, layer tests)
+- Structured log events wired into TypeRegistry programs via
+  `Effect.log` + `Effect.annotateLogs`
+- Effect Metrics module (`src/metrics.ts`) with counters and timer
+  histograms actively tracked in TypeRegistry programs
+- Comprehensive test suite (unit, integration, schema, layer, logging,
+  and metrics tests)
 
 ### What Is Not Yet Implemented
 
@@ -756,8 +761,19 @@ export { TypeRegistryLive } from "./layers/TypeRegistryLive.js";
 export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 
 // Events
-export type { LogEvent, LogEventHandler } from "./events.js";
-export { LogEventSchema, createLogEvent } from "./events.js";
+export type { LogEvent } from "./events.js";
+export { LogEventSchema } from "./events.js";
+
+// Metrics
+export {
+  cacheHits,
+  cacheMisses,
+  cacheStale,
+  packagesLoaded,
+  packagesFailed,
+  packageLoadDuration,
+  batchDuration,
+} from "./metrics.js";
 
 // External types
 export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
@@ -928,11 +944,14 @@ used in source code. Planned integration points:
   with `semver-effect` operations
 - Use semver range parsing and satisfaction checking for version matching
 
-### Structured Logging Integration
+### Structured Logging Integration -- COMPLETE
 
-The `events.ts` module defines Schema-validated log events but they are not
-yet wired into the TypeRegistry operations. Integration with Effect's
-structured logging system is planned.
+The `events.ts` module defines Schema-validated log events. Events are
+wired into `TypeRegistry` programs via `Effect.log` + `Effect.annotateLogs`.
+An Effect Metrics module (`src/metrics.ts`) provides 5 counters and 2 timer
+histograms that are actively tracked in TypeRegistry programs. Consumers
+intercept events via Effect's Logger layer. See `observability.md` for
+full details.
 
 ---
 
