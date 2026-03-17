@@ -95,6 +95,18 @@ export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 export type { LogEvent } from "./events.js";
 export { LogEventSchema } from "./events.js";
 
+// ── Metrics ─────────────────────────────────────────────────────────────────
+
+export {
+	batchDuration,
+	cacheHits,
+	cacheMisses,
+	cacheStale,
+	packageLoadDuration,
+	packagesFailed,
+	packagesLoaded,
+} from "./metrics.js";
+
 // ── Utilities ───────────────────────────────────────────────────────────────
 
 export { getDefaultCacheDir } from "./utils/xdg.js";
