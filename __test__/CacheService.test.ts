@@ -9,7 +9,6 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeNodeCacheLayer } from "../src/layers/CacheServiceLive.js";
-import { CacheMetadata } from "../src/schemas/CacheMetadata.js";
 import { PackageSpec } from "../src/schemas/PackageSpec.js";
 import { CacheService } from "../src/services/CacheService.js";
 

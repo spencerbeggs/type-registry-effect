@@ -92,8 +92,20 @@ export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 
 // ── Events ──────────────────────────────────────────────────────────────────
 
-export type { LogEvent, LogEventHandler } from "./events.js";
-export { LogEventSchema, createLogEvent } from "./events.js";
+export type { LogEvent } from "./events.js";
+export { LogEventSchema } from "./events.js";
+
+// ── Metrics ─────────────────────────────────────────────────────────────────
+
+export {
+	batchDuration,
+	cacheHits,
+	cacheMisses,
+	cacheStale,
+	packageLoadDuration,
+	packagesFailed,
+	packagesLoaded,
+} from "./metrics.js";
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 
