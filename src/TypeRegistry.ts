@@ -16,12 +16,21 @@
  * @packageDocumentation
  */
 
-import { Effect } from "effect";
+import { Effect, Metric } from "effect";
 import type { CacheError } from "./errors/CacheError.js";
 import type { NetworkError } from "./errors/NetworkError.js";
 import { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
 import { ParseError } from "./errors/ParseError.js";
 import type { ResolutionError } from "./errors/ResolutionError.js";
+import {
+	batchDuration,
+	cacheHits,
+	cacheMisses,
+	cacheStale,
+	packageLoadDuration,
+	packagesFailed,
+	packagesLoaded,
+} from "./metrics.js";
 import type { CacheMetadata } from "./schemas/CacheMetadata.js";
 import type { PackageJson } from "./schemas/PackageJson.js";
 import type { PackageSpec } from "./schemas/PackageSpec.js";
@@ -114,6 +123,12 @@ export const fetchAndCache = (
 		const cache = yield* CacheService;
 		const fetcher = yield* PackageFetcher;
 
+		yield* Effect.logDebug(`Fetching ${pkg.toString()}`).pipe(
+			Effect.annotateLogs("event", "package.fetch.start"),
+			Effect.annotateLogs("package", pkg.name),
+			Effect.annotateLogs("version", pkg.version),
+		);
+
 		// Fetch package.json
 		const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
 
@@ -191,15 +206,23 @@ export const getPackageVFS = (
 	VirtualFileSystem,
 	NetworkError | ParseError | CacheError | PackageNotFoundError,
 	CacheService | PackageFetcher
-> =>
-	Effect.gen(function* () {
+> => {
+	const inner = Effect.gen(function* () {
 		const cache = yield* CacheService;
 		const autoFetch = options?.autoFetch ?? true;
-
+		const startTime = Date.now();
 		const exists = yield* cache.exists(pkg);
+		let source: "cache" | "network" = "cache";
 
 		if (!exists && autoFetch) {
+			yield* Effect.logDebug(`Cache miss for ${pkg.toString()}`).pipe(
+				Effect.annotateLogs("event", "cache.miss"),
+				Effect.annotateLogs("package", pkg.name),
+				Effect.annotateLogs("version", pkg.version),
+			);
+			yield* Metric.increment(cacheMisses);
 			yield* fetchAndCache(pkg, options);
+			source = "network";
 		} else if (!exists && !autoFetch) {
 			yield* Effect.fail(
 				new PackageNotFoundError({
@@ -210,20 +233,71 @@ export const getPackageVFS = (
 			);
 		} else if (exists && autoFetch) {
 			// Check TTL staleness — re-fetch if cache entry has expired
-			const isStale = yield* cache.readMetadata(pkg).pipe(
-				Effect.map((meta) => {
-					if (meta.ttl === undefined) return false;
-					return meta.cachedAt + meta.ttl < Date.now();
-				}),
-				Effect.catchAll(() => Effect.succeed(false)),
+			const metaResult = yield* cache.readMetadata(pkg).pipe(
+				Effect.map((meta) => ({
+					isStale: meta.ttl !== undefined ? meta.cachedAt + meta.ttl < Date.now() : false,
+					ageMinutes: (Date.now() - meta.cachedAt) / 60000,
+					ttlMinutes: meta.ttl !== undefined ? meta.ttl / 60000 : undefined,
+				})),
+				Effect.catchAll(() =>
+					Effect.succeed({
+						isStale: false,
+						ageMinutes: 0,
+						ttlMinutes: undefined as number | undefined,
+					}),
+				),
 			);
-			if (isStale) {
+
+			if (metaResult.isStale) {
+				yield* Effect.logDebug(`Cache stale for ${pkg.toString()}`).pipe(
+					Effect.annotateLogs("event", "cache.stale"),
+					Effect.annotateLogs("package", pkg.name),
+					Effect.annotateLogs("version", pkg.version),
+					Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
+					Effect.annotateLogs("ttlMinutes", String(Math.round(metaResult.ttlMinutes ?? 0))),
+				);
+				yield* Metric.increment(cacheStale);
 				yield* fetchAndCache(pkg, options);
+				source = "network";
+			} else {
+				yield* Effect.log(`Cache hit for ${pkg.toString()}`).pipe(
+					Effect.annotateLogs("event", "cache.hit"),
+					Effect.annotateLogs("package", pkg.name),
+					Effect.annotateLogs("version", pkg.version),
+					Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
+				);
+				yield* Metric.increment(cacheHits);
 			}
+		} else {
+			// exists && !autoFetch
+			const metaResult = yield* cache.readMetadata(pkg).pipe(
+				Effect.map((meta) => ({ ageMinutes: (Date.now() - meta.cachedAt) / 60000 })),
+				Effect.catchAll(() => Effect.succeed({ ageMinutes: 0 })),
+			);
+			yield* Effect.log(`Cache hit for ${pkg.toString()}`).pipe(
+				Effect.annotateLogs("event", "cache.hit"),
+				Effect.annotateLogs("package", pkg.name),
+				Effect.annotateLogs("version", pkg.version),
+				Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
+			);
+			yield* Metric.increment(cacheHits);
 		}
 
-		return yield* cache.getVFS(pkg);
+		const vfs = yield* cache.getVFS(pkg);
+		const durationMs = Date.now() - startTime;
+		yield* Effect.log(`Loaded ${pkg.toString()} (${vfs.size} files, ${source})`).pipe(
+			Effect.annotateLogs("event", "package.loaded"),
+			Effect.annotateLogs("package", pkg.name),
+			Effect.annotateLogs("version", pkg.version),
+			Effect.annotateLogs("files", String(vfs.size)),
+			Effect.annotateLogs("source", source),
+			Effect.annotateLogs("durationMs", String(durationMs)),
+		);
+		yield* Metric.increment(packagesLoaded);
+		return vfs;
 	});
+	return inner.pipe(Metric.trackDuration(packageLoadDuration));
+};
 
 /**
  * Get a combined {@link VirtualFileSystem} for multiple packages with
@@ -275,30 +349,65 @@ export const getPackageVFS = (
 export const getVFS = (
 	packages: ReadonlyArray<PackageSpec>,
 	options?: { readonly autoFetch?: boolean; readonly ttl?: number },
-): Effect.Effect<VirtualFileSystem, PackageNotFoundError, CacheService | PackageFetcher> =>
-	Effect.gen(function* () {
+): Effect.Effect<VirtualFileSystem, PackageNotFoundError, CacheService | PackageFetcher> => {
+	const inner = Effect.gen(function* () {
+		const startTime = Date.now();
+
+		yield* Effect.logDebug(`Fetching VFS for ${packages.length} package(s)`).pipe(
+			Effect.annotateLogs("event", "packages.batch.start"),
+			Effect.annotateLogs("total", String(packages.length)),
+			Effect.annotateLogs("packages", packages.map((p) => p.toString()).join(", ")),
+		);
+
 		const results = yield* Effect.forEach(
 			packages,
 			(pkg) =>
 				getPackageVFS(pkg, options).pipe(
-					Effect.map((vfs) => ({ _tag: "ok" as const, vfs })),
-					Effect.catchAll((error) => Effect.succeed({ _tag: "err" as const, pkg, error })),
+					Effect.map((vfs) => ({ _tag: "ok" as const, vfs, pkg })),
+					Effect.catchAll((error) =>
+						Effect.gen(function* () {
+							yield* Effect.logWarning(`Failed to load ${pkg.toString()}: ${String(error)}`).pipe(
+								Effect.annotateLogs("event", "package.load.failed"),
+								Effect.annotateLogs("package", pkg.name),
+								Effect.annotateLogs("version", pkg.version),
+								Effect.annotateLogs("error", String(error)),
+							);
+							yield* Metric.increment(packagesFailed);
+							return { _tag: "err" as const, pkg, error };
+						}),
+					),
 				),
 			{ concurrency: 5 },
 		);
 
 		const merged: VirtualFileSystem = new Map();
 		const errors: Array<{ pkg: PackageSpec; error: unknown }> = [];
+		let totalFiles = 0;
 
 		for (const result of results) {
 			if (result._tag === "ok") {
 				for (const [path, content] of result.vfs) {
 					merged.set(path, content);
 				}
+				totalFiles += result.vfs.size;
 			} else {
 				errors.push({ pkg: result.pkg, error: result.error });
 			}
 		}
+
+		const durationMs = Date.now() - startTime;
+		const loadedCount = packages.length - errors.length;
+
+		yield* Effect.log(
+			`Batch complete: ${loadedCount}/${packages.length} packages (${totalFiles} files, ${durationMs}ms)`,
+		).pipe(
+			Effect.annotateLogs("event", "packages.batch.complete"),
+			Effect.annotateLogs("loaded", String(loadedCount)),
+			Effect.annotateLogs("failed", String(errors.length)),
+			Effect.annotateLogs("total", String(packages.length)),
+			Effect.annotateLogs("totalFiles", String(totalFiles)),
+			Effect.annotateLogs("durationMs", String(durationMs)),
+		);
 
 		if (errors.length === packages.length && packages.length > 0) {
 			yield* Effect.fail(
@@ -312,6 +421,8 @@ export const getVFS = (
 
 		return merged;
 	});
+	return inner.pipe(Metric.trackDuration(batchDuration));
+};
 
 /**
  * Resolve an import specifier (e.g. `"zod"`, `"zod/lib/types"`) against a
@@ -460,7 +571,14 @@ export const resolveVersion = (
 ): Effect.Effect<string, NetworkError | PackageNotFoundError, PackageFetcher> =>
 	Effect.gen(function* () {
 		const fetcher = yield* PackageFetcher;
-		return yield* fetcher.resolveVersion(name, ref);
+		const resolved = yield* fetcher.resolveVersion(name, ref);
+		yield* Effect.log(`Resolved ${name}: ${ref} -> ${resolved}`).pipe(
+			Effect.annotateLogs("event", "package.version.resolved"),
+			Effect.annotateLogs("package", name),
+			Effect.annotateLogs("requested", ref),
+			Effect.annotateLogs("resolved", resolved),
+		);
+		return resolved;
 	});
 
 /**
