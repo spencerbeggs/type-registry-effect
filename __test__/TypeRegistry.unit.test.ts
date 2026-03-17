@@ -11,7 +11,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NetworkError } from "../src/errors/NetworkError.js";
 import { makeNodeCacheLayer } from "../src/layers/CacheServiceLive.js";
 import { TypeResolverLive } from "../src/layers/TypeResolverLive.js";
-import { CacheMetadata } from "../src/schemas/CacheMetadata.js";
 import type { PackageJson } from "../src/schemas/PackageJson.js";
 import { PackageSpec } from "../src/schemas/PackageSpec.js";
 import type { VirtualFileSystem } from "../src/services/CacheService.js";
