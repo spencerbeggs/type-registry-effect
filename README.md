@@ -12,6 +12,7 @@ Fetch, cache, and resolve TypeScript type definitions from npm packages for use 
 - Virtual file system generation compatible with @typescript/vfs and Twoslash
 - Module resolution via package.json exports, typesVersions, and legacy fields
 - Concurrent package loading with graceful degradation on partial failures
+- Built-in Effect Metrics (counters and timers) for cache hits, load durations, and batch operations
 
 ## Installation
 

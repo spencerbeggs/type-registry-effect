@@ -1,27 +1,16 @@
 # Observability
 
-type-registry-effect uses a structured event system for observability.
-Events are defined with Effect Schema and emitted at key lifecycle
-points.
+type-registry-effect emits structured log events and Effect Metrics from
+`TypeRegistry` namespace programs. Events flow through Effect's standard
+Logger layer; metrics are compatible with OpenTelemetry exporters.
 
-> **Note:** The event system currently provides validated schemas and a
-> `createLogEvent` factory. There is no callback-based subscription API
-> yet. Integration with Effect's built-in logging and tracing is planned
-> for a future release.
+## Log events
 
-## Event schema
+Events are emitted via `Effect.log` with `Effect.annotateLogs` at key
+lifecycle points. A custom Logger receives events as flat string
+annotations in its `annotations` parameter.
 
-All events are defined as a discriminated union in `LogEventSchema`.
-Each event has:
-
-- `event` -- discriminator string (e.g., `"cache.hit"`)
-- `level` -- severity (`"debug"` | `"info"` | `"warn"`)
-- `message` -- human-readable description
-- `timestamp` -- Unix timestamp
-- `fiber` -- optional Effect fiber ID
-- `data` -- event-specific payload
-
-## Event types
+### Event types
 
 | Event | Level | When |
 | --- | --- | --- |
@@ -36,58 +25,115 @@ Each event has:
 | `packages.batch.complete` | info | Batch fetch completed |
 | `typescript.cache.created` | info | TypeScript virtual environment created |
 
-## Using events
+### Annotation keys
 
-### Creating validated events
+Each event type has a specific set of flat string annotations. The
+`event` annotation is the discriminator. All values are strings (numeric
+values are stringified before emission).
+
+`LogEventSchema` in `events.ts` documents the exact annotation keys for
+each event type and can be used for runtime validation.
+
+### Receiving events
+
+Provide a custom Logger layer to receive events:
 
 ```typescript
-import { createLogEvent, type LogEvent } from "type-registry-effect";
+import { Effect, Logger, LogLevel, Layer } from "effect";
+import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { NodeLayer } from "type-registry-effect/node";
 
-const event: LogEvent = createLogEvent({
-  event: "cache.hit",
-  level: "info",
-  message: "Cache hit for zod@3.23.8",
-  timestamp: Date.now(),
-  data: {
-    package: "zod",
-    version: "3.23.8",
-    ageMinutes: 12,
-  },
+const myLogger = Logger.make(({ message, logLevel, annotations }) => {
+  const event = annotations.get("event") as string | undefined;
+
+  if (event === "package.loaded") {
+    const pkg = annotations.get("package") as string;
+    const source = annotations.get("source") as string;
+    const files = annotations.get("files") as string;
+    console.log(`Loaded ${pkg} (${files} files, ${source})`);
+  }
+
+  if (event === "package.load.failed") {
+    const pkg = annotations.get("package") as string;
+    const error = annotations.get("error") as string;
+    console.error(`Failed: ${pkg}: ${error}`);
+  }
 });
+
+const program = TypeRegistry.getVFS([
+  new PackageSpec({ name: "zod", version: "3.23.8" }),
+]);
+
+await Effect.runPromise(
+  program.pipe(
+    Effect.provide(NodeLayer),
+    Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
+    Effect.provide(Logger.minimumLogLevel(LogLevel.Debug)),
+  ),
+);
 ```
 
 ### Type narrowing
 
-The `event` field is a string literal discriminator:
+The `LogEvent` type is a discriminated union -- narrow on the `event`
+field:
 
 ```typescript
 import type { LogEvent } from "type-registry-effect";
 
-function handleEvent(event: LogEvent): void {
+function handleAnnotations(event: LogEvent): void {
   switch (event.event) {
     case "cache.hit":
-      // event.data is typed as { package, version, ageMinutes }
-      console.log(`cached: ${event.data.package}@${event.data.version}`);
+      console.log(`cached: ${event.package}@${event.version}`);
       break;
-
     case "package.loaded":
-      // event.data is typed as { package, version, files, source }
-      console.log(`loaded ${event.data.files} files from ${event.data.source}`);
+      console.log(`loaded ${event.files} files from ${event.source}`);
       break;
-
-    case "package.load.failed":
-      console.error(`failed: ${event.data.error}`);
+    case "packages.batch.complete":
+      console.log(`batch: ${event.loaded}/${event.total}`);
       break;
   }
 }
 ```
 
-## Design notes
+## Metrics
 
-The event system is decoupled from Effect's logging layer by design.
-Events are plain data validated by Schema -- they can be consumed by any
-logging library, metrics collector, or UI without depending on Effect
-runtime.
+The library exports Effect Metrics that are automatically updated during
+TypeRegistry operations. Consumers can read metric values via
+`Metric.value` or connect an OpenTelemetry exporter.
 
-Future versions may add an Effect `Layer` that bridges these events into
-`Effect.log` spans for automatic tracing.
+### Counters
+
+| Metric | Description |
+| --- | --- |
+| `cacheHits` | Cache hits (package found and fresh) |
+| `cacheMisses` | Cache misses (package not cached) |
+| `cacheStale` | Stale cache entries (TTL expired) |
+| `packagesLoaded` | Packages loaded successfully |
+| `packagesFailed` | Packages that failed to load |
+
+### Histograms (timers)
+
+| Metric | Description |
+| --- | --- |
+| `packageLoadDuration` | Time to load a single package (ms) |
+| `batchDuration` | Time for a full `getVFS` batch (ms) |
+
+### Reading metrics
+
+```typescript
+import { Effect, Metric } from "effect";
+import { cacheHits, packageLoadDuration } from "type-registry-effect";
+
+const program = Effect.gen(function* () {
+  // After some TypeRegistry operations...
+  const hits = yield* Metric.value(cacheHits);
+  console.log(`Cache hits: ${hits.count}`);
+
+  const timing = yield* Metric.value(packageLoadDuration);
+  console.log(`Avg load time: ${timing.sum / timing.count}ms`);
+});
+```
+
+Metric names use underscore-separated format compatible with
+Prometheus and OpenTelemetry (e.g., `type_registry_cache_hits`).
