@@ -37,18 +37,6 @@ import * as Schema from "effect/Schema";
  * `switch`/`case` or `if` block.
  *
  * @see {@link LogEvent} for the inferred TypeScript type
- * @see {@link LogEventHandler} for the callback signature
- *
- * @example
- * ```typescript
- * import type { LogEventHandler } from "type-registry-effect";
- *
- * const handler: LogEventHandler = (event) => {
- *   if (event.event === "package.loaded") {
- *     console.log(`Loaded ${event.data.package}@${event.data.version}`);
- *   }
- * };
- * ```
  *
  * @public
  */
@@ -129,6 +117,7 @@ export const LogEventSchema = Schema.Union(
 			version: Schema.String,
 			files: Schema.Number,
 			source: Schema.Literal("cache", "network"),
+			durationMs: Schema.Number,
 		}),
 	}),
 	// Package load failed
@@ -222,41 +211,3 @@ export const LogEventSchema = Schema.Union(
  * @public
  */
 export type LogEvent = Schema.Schema.Type<typeof LogEventSchema>;
-
-/**
- * Callback function type for receiving validated {@link LogEvent} instances.
- *
- * @remarks
- * Pass an implementation of this type to logging integrations that subscribe
- * to TypeRegistry operations. The handler is invoked synchronously with each
- * event after it has been validated against the {@link LogEventSchema}.
- *
- * @see {@link LogEvent} for the event payload type
- * @see {@link LogEventSchema} for the runtime schema
- *
- * @public
- */
-export type LogEventHandler = (event: LogEvent) => void;
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Create a validated {@link LogEvent} from unknown data.
- *
- * @remarks
- * Decodes `event` synchronously through {@link LogEventSchema}. Throws a
- * parse error if the input does not conform to any variant of the schema.
- * This is intended for internal use within the library's logging
- * infrastructure.
- *
- * @param event - Raw, unvalidated event data.
- * @returns A fully validated {@link LogEvent}.
- * @throws `ParseError` when `event` does not match {@link LogEventSchema}.
- *
- * @internal
- */
-export function createLogEvent(event: unknown): LogEvent {
-	return Schema.decodeUnknownSync(LogEventSchema)(event);
-}

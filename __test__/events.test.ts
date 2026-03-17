@@ -1,5 +1,8 @@
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
-import { createLogEvent } from "../src/events.js";
+import { LogEventSchema } from "../src/events.js";
+
+const decode = Schema.decodeUnknownSync(LogEventSchema);
 
 const base = {
 	message: "test message",
@@ -11,7 +14,7 @@ const baseWithFiber = {
 	fiber: "fiber-123",
 };
 
-describe("createLogEvent", () => {
+describe("LogEventSchema", () => {
 	describe("valid events", () => {
 		it("should validate package.version.resolved", () => {
 			const input = {
@@ -20,7 +23,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { package: "react", requested: "^18", resolved: "18.2.0" },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate cache.hit", () => {
@@ -30,7 +33,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { package: "react", version: "18.2.0", ageMinutes: 5 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate cache.stale", () => {
@@ -40,7 +43,7 @@ describe("createLogEvent", () => {
 				level: "debug",
 				data: { package: "react", version: "18.2.0", ageMinutes: 120, ttlMinutes: 60 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate cache.miss", () => {
@@ -50,7 +53,7 @@ describe("createLogEvent", () => {
 				level: "debug",
 				data: { package: "react", version: "18.2.0" },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate package.fetch.start", () => {
@@ -60,7 +63,7 @@ describe("createLogEvent", () => {
 				level: "debug",
 				data: { package: "react", version: "18.2.0" },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate package.loaded", () => {
@@ -68,9 +71,9 @@ describe("createLogEvent", () => {
 				...base,
 				event: "package.loaded",
 				level: "info",
-				data: { package: "react", version: "18.2.0", files: 42, source: "cache" as const },
+				data: { package: "react", version: "18.2.0", files: 42, source: "cache" as const, durationMs: 1234 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate package.loaded with source network", () => {
@@ -78,9 +81,9 @@ describe("createLogEvent", () => {
 				...base,
 				event: "package.loaded",
 				level: "info",
-				data: { package: "react", version: "18.2.0", files: 42, source: "network" as const },
+				data: { package: "react", version: "18.2.0", files: 42, source: "network" as const, durationMs: 5678 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate package.load.failed", () => {
@@ -90,7 +93,7 @@ describe("createLogEvent", () => {
 				level: "warn",
 				data: { package: "react", version: "18.2.0", error: "404 Not Found" },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate packages.batch.start", () => {
@@ -100,7 +103,7 @@ describe("createLogEvent", () => {
 				level: "debug",
 				data: { total: 3, packages: ["react", "vue", "svelte"] },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate packages.batch.complete", () => {
@@ -110,7 +113,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { loaded: 2, failed: 1, total: 3, totalFiles: 100, durationMs: 1500 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 
 		it("should validate typescript.cache.created", () => {
@@ -120,7 +123,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { packages: ["react", "vue"], fileCount: 50, rootFiles: 2 },
 			};
-			expect(createLogEvent(input)).toEqual(input);
+			expect(decode(input)).toEqual(input);
 		});
 	});
 
@@ -132,7 +135,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { package: "react", version: "18.2.0", ageMinutes: 5 },
 			};
-			const result = createLogEvent(input);
+			const result = decode(input);
 			expect(result).toEqual(input);
 			expect("fiber" in result).toBe(false);
 		});
@@ -144,7 +147,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: { package: "react", version: "18.2.0", ageMinutes: 5 },
 			};
-			const result = createLogEvent(input);
+			const result = decode(input);
 			expect(result).toEqual(input);
 			expect(result.fiber).toBe("fiber-123");
 		});
@@ -158,7 +161,7 @@ describe("createLogEvent", () => {
 				timestamp: Date.now(),
 				data: { package: "react", version: "18.2.0", ageMinutes: 5 },
 			};
-			expect(() => createLogEvent(input)).toThrow();
+			expect(() => decode(input)).toThrow();
 		});
 
 		it("should throw on missing data field", () => {
@@ -167,7 +170,7 @@ describe("createLogEvent", () => {
 				event: "cache.hit",
 				level: "info",
 			};
-			expect(() => createLogEvent(input)).toThrow();
+			expect(() => decode(input)).toThrow();
 		});
 
 		it("should throw on unknown event discriminator", () => {
@@ -177,7 +180,7 @@ describe("createLogEvent", () => {
 				level: "info",
 				data: {},
 			};
-			expect(() => createLogEvent(input)).toThrow();
+			expect(() => decode(input)).toThrow();
 		});
 
 		it("should throw on wrong level for event type", () => {
@@ -187,7 +190,7 @@ describe("createLogEvent", () => {
 				level: "debug",
 				data: { package: "react", version: "18.2.0", ageMinutes: 5 },
 			};
-			expect(() => createLogEvent(input)).toThrow();
+			expect(() => decode(input)).toThrow();
 		});
 
 		it("should throw on invalid source literal in package.loaded", () => {
@@ -195,15 +198,15 @@ describe("createLogEvent", () => {
 				...base,
 				event: "package.loaded",
 				level: "info",
-				data: { package: "react", version: "18.2.0", files: 42, source: "disk" },
+				data: { package: "react", version: "18.2.0", files: 42, source: "disk", durationMs: 100 },
 			};
-			expect(() => createLogEvent(input)).toThrow();
+			expect(() => decode(input)).toThrow();
 		});
 
 		it("should throw on completely invalid input", () => {
-			expect(() => createLogEvent(null)).toThrow();
-			expect(() => createLogEvent(42)).toThrow();
-			expect(() => createLogEvent("string")).toThrow();
+			expect(() => decode(null)).toThrow();
+			expect(() => decode(42)).toThrow();
+			expect(() => decode("string")).toThrow();
 		});
 	});
 });

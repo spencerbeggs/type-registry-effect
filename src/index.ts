@@ -92,8 +92,8 @@ export { TypeResolverLive } from "./layers/TypeResolverLive.js";
 
 // ── Events ──────────────────────────────────────────────────────────────────
 
-export type { LogEvent, LogEventHandler } from "./events.js";
-export { LogEventSchema, createLogEvent } from "./events.js";
+export type { LogEvent } from "./events.js";
+export { LogEventSchema } from "./events.js";
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 
