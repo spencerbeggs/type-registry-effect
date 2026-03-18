@@ -48,23 +48,23 @@
 		"semver-effect": "^0.1.0"
 	},
 	"devDependencies": {
-		"@effect/platform": "^0.94.1",
-		"@effect/platform-node": "^0.104.0",
+		"@effect/platform": "catalog:silk",
+		"@effect/platform-node": "catalog:silk",
 		"@savvy-web/changesets": "^0.5.3",
 		"@savvy-web/commitlint": "^0.4.2",
 		"@savvy-web/lint-staged": "^0.6.1",
 		"@savvy-web/rslib-builder": "^0.18.3",
 		"@savvy-web/vitest": "^0.2.2",
 		"@typescript/vfs": "^1.6.4",
-		"effect": "^3.19.14",
-		"typescript": "^5.7.3"
+		"effect": "catalog:silk",
+		"typescript": "catalog:silk"
 	},
 	"peerDependencies": {
-		"@effect/platform": "^0.94.1",
-		"@effect/platform-node": "^0.104.0",
+		"@effect/platform": "catalog:silkPeers",
+		"@effect/platform-node": "catalog:silkPeers",
 		"@typescript/vfs": "^1.6.4",
-		"effect": "^3.19.14",
-		"typescript": "^5.7.3"
+		"effect": "catalog:silkPeers",
+		"typescript": "catalog:silkPeers"
 	},
 	"peerDependenciesMeta": {
 		"@effect/platform-node": {
