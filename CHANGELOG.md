@@ -1,5 +1,11 @@
 # type-registry-effect
 
+## 0.2.1
+
+### Other
+
+* [`2eb388e`](https://github.com/spencerbeggs/type-registry-effect/commit/2eb388e12df00e04dcddd4df5ba1f00c8099305e) Migrate Effect ecosystem dependencies to `catalog:silk` and `catalog:silkPeers` for centralized version management via `@savvy-web/pnpm-plugin-silk`. Fixes #12.
+
 ## 0.2.0
 
 ### Breaking Changes
