@@ -538,4 +538,258 @@ describe("TypeResolver", () => {
 			expect(result.isTypeDefinition).toBe(true);
 		});
 	});
+
+	describe("resolveMainEntry — main field fallback", () => {
+		it("should use main field when no types/typings/exports exist", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				main: "./lib/index.js",
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("lib/index.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should append .d.ts to main field with non-js extension", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				main: "./lib/index.json",
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveMainEntry(packageJson, testPackage);
+				}),
+			);
+
+			// The regex only strips .js/.mjs/.cjs/.ts/.mts/.cts, so .json stays
+			// and tryExtensions produces lib/index.json.d.ts as first type candidate
+			expect(result.filePath).toBe("lib/index.json.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveImport — exports string shorthand", () => {
+		it("should fall through string exports when resolveImport normalizes to './'", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: "./dist/index.d.ts",
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					// resolveImport normalizes to "./" which doesn't match "." in getExportValue
+					// for string exports, so it falls through to tryExtensions
+					return yield* resolver.resolveImport("test-package", packageJson, testPackage);
+				}),
+			);
+
+			// Falls through string exports → tryExtensions on empty subpath
+			expect(result.filePath).toBe(".d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should fall through string exports for non-root subpath", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: "./dist/index.d.ts",
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./utils", packageJson, testPackage);
+				}),
+			);
+
+			// Falls through to tryExtensions since string exports only matches "."
+			expect(result.filePath).toBe("utils.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveImport — exports with import/default conditions", () => {
+		it("should resolve from import condition when no types condition", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					".": {
+						import: "./dist/index.mjs",
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport(".", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/index.mjs");
+		});
+
+		it("should resolve from default condition when no types or import", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					".": {
+						default: "./dist/index.js",
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport(".", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/index.js");
+		});
+
+		it("should resolve nested import object condition", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					".": {
+						import: {
+							types: "./dist/index.d.mts",
+							default: "./dist/index.mjs",
+						},
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport(".", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/index.d.mts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+
+		it("should resolve nested default object condition", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					".": {
+						default: {
+							types: "./dist/index.d.ts",
+							default: "./dist/index.js",
+						},
+					},
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport(".", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/index.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveTypeEntries — skips non-subpath keys", () => {
+		it("should skip exports keys that do not start with '.'", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				types: "./dist/index.d.ts",
+				exports: {
+					".": { types: "./dist/index.d.ts" },
+					node: { types: "./dist/node.d.ts" },
+					browser: { types: "./dist/browser.d.ts" },
+				},
+			};
+
+			const results = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveTypeEntries(packageJson, testPackage);
+				}),
+			);
+
+			// Only "." should be collected, "node" and "browser" skipped
+			expect(results.length).toBe(1);
+			expect(results[0]?.filePath).toBe("dist/index.d.ts");
+		});
+	});
+
+	describe("findTypeDefinition — non-standard extensions", () => {
+		it("should handle file without js/mjs/cjs extension via else branch", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("src/utils.ts", {} as PackageJson, testPackage);
+				}),
+			);
+
+			expect(result).not.toBeNull();
+			// The else branch regex \.(m?js|cjs)$ doesn't match .ts,
+			// so withoutExt stays "src/utils.ts" and .d.ts is appended
+			expect(result?.filePath).toBe("src/utils.ts.d.ts");
+			expect(result?.isTypeDefinition).toBe(true);
+		});
+
+		it("should handle file with no extension via else branch", async () => {
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.findTypeDefinition("src/utils", {} as PackageJson, testPackage);
+				}),
+			);
+
+			expect(result).not.toBeNull();
+			expect(result?.filePath).toBe("src/utils.d.ts");
+			expect(result?.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("resolveImport — getExportValue without-dot alt lookup", () => {
+		it("should match exports key without leading dot-slash", async () => {
+			const packageJson: PackageJson = {
+				name: "test-package",
+				version: "1.0.0",
+				exports: {
+					utils: { types: "./dist/utils.d.ts" },
+				},
+			};
+
+			const result = await run(
+				Effect.gen(function* () {
+					const resolver = yield* TypeResolver;
+					return yield* resolver.resolveImport("./utils", packageJson, testPackage);
+				}),
+			);
+
+			expect(result.filePath).toBe("dist/utils.d.ts");
+			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
 });
