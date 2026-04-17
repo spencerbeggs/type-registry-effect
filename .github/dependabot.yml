@@ -7,8 +7,6 @@ updates:
   - package-ecosystem: "npm"
     directories:
       - "/"
-      - "/docs"
-      - "/pkgs/*"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -47,6 +45,7 @@ updates:
       github-actions:
         patterns:
           - "*"
+
 # Additional configuration notes:
 # - Uses pnpm via npm ecosystem (Dependabot handles pnpm lockfiles)
 # - Groups minor and patch updates to reduce PR noise
