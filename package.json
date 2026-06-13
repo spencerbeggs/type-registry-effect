@@ -49,7 +49,7 @@
 	"devDependencies": {
 		"@effect/platform": "catalog:silk",
 		"@effect/platform-node": "catalog:silk",
-		"@savvy-web/bundler": "^0.4.0",
+		"@savvy-web/bundler": "^0.4.1",
 		"@savvy-web/silk": "^0.4.2",
 		"@savvy-web/vitest": "^1.5.0",
 		"@typescript/vfs": "^1.6.4",
