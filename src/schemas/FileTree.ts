@@ -40,8 +40,9 @@ export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
  *
  * @remarks
  * The response includes a `default` field indicating the package's default
- * branch/tag and a `files` array of {@link FileTreeEntry} objects. This
- * corresponds to the `GET /v1/packages/npm/:package@:version/flat` endpoint.
+ * entry file (`null` for packages that declare none) and a `files` array of
+ * {@link FileTreeEntry} objects. This corresponds to the
+ * `GET /v1/packages/npm/:package@:version/flat` endpoint.
  *
  * @example
  * ```typescript
@@ -63,7 +64,10 @@ export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
  * @public
  */
 export const FileTreeResponse = Schema.Struct({
-	default: Schema.String,
+	// jsDelivr returns `default: null` for packages that declare no default
+	// file (e.g. `ink`), so this must be nullable. It is metadata only — the
+	// loader consumes `files`, never `default`.
+	default: Schema.NullOr(Schema.String),
 	files: Schema.Array(FileTreeEntry),
 });
 

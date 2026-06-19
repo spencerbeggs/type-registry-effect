@@ -46,6 +46,13 @@
  * @packageDocumentation
  */
 
+import type { CacheError } from "./errors/CacheError.js";
+import type { NetworkError } from "./errors/NetworkError.js";
+import type { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
+import type { ParseError } from "./errors/ParseError.js";
+import type { ResolutionError } from "./errors/ResolutionError.js";
+import type { TimeoutError } from "./errors/TimeoutError.js";
+
 // ── Namespace re-exports ────────────────────────────────────────────────────
 
 export * as TypeRegistry from "./TypeRegistry.js";
@@ -61,26 +68,52 @@ export { ResolvedModule, ResolvedModuleBase } from "./schemas/ResolvedModule.js"
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
-export type { TypeRegistryError } from "./errors/index.js";
-export {
-	CacheError,
-	CacheErrorBase,
-	NetworkError,
-	NetworkErrorBase,
-	PackageNotFoundError,
-	PackageNotFoundErrorBase,
-	ParseError,
-	ParseErrorBase,
-	ResolutionError,
-	ResolutionErrorBase,
-	TimeoutError,
-	TimeoutErrorBase,
-} from "./errors/index.js";
+export { CacheError, CacheErrorBase } from "./errors/CacheError.js";
+export { NetworkError, NetworkErrorBase } from "./errors/NetworkError.js";
+export { PackageNotFoundError, PackageNotFoundErrorBase } from "./errors/PackageNotFoundError.js";
+export { ParseError, ParseErrorBase } from "./errors/ParseError.js";
+export { ResolutionError, ResolutionErrorBase } from "./errors/ResolutionError.js";
+export { TimeoutError, TimeoutErrorBase } from "./errors/TimeoutError.js";
+
+/**
+ * Union of all error types that can be raised by the type-registry-effect package.
+ *
+ * @remarks
+ * `TypeRegistryError` is a discriminated union over the `_tag` field. Each
+ * variant corresponds to a specific failure mode:
+ *
+ * - `"CacheError"` -- disk cache operations
+ * - `"NetworkError"` -- HTTP requests to the CDN
+ * - `"PackageNotFoundError"` -- missing packages or versions
+ * - `"ParseError"` -- schema validation / JSON parsing
+ * - `"ResolutionError"` -- import specifier resolution
+ * - `"TimeoutError"` -- operation time limits
+ *
+ * Use `Effect.catchTags` to exhaustively handle all variants, or
+ * `Effect.catchTag` for selective handling of individual error types.
+ *
+ * @public
+ */
+export type TypeRegistryError =
+	| CacheError
+	| NetworkError
+	| PackageNotFoundError
+	| ParseError
+	| ResolutionError
+	| TimeoutError;
 
 // ── Services ────────────────────────────────────────────────────────────────
 
-export { CacheService, type VirtualFileSystem } from "./services/CacheService.js";
+export { type CachePruneResult, CacheService, type VirtualFileSystem } from "./services/CacheService.js";
 export { PackageFetcher, type PackageMetadata } from "./services/PackageFetcher.js";
+export {
+	RegistryEvent,
+	TypeRegistryObserver,
+	type TypeRegistryObserverShape,
+	emitEvent,
+	layerCallback,
+	layerNoop,
+} from "./services/TypeRegistryObserver.js";
 export { TypeResolver } from "./services/TypeResolver.js";
 
 // ── Layers ──────────────────────────────────────────────────────────────────
@@ -106,7 +139,3 @@ export {
 	packagesFailed,
 	packagesLoaded,
 } from "./metrics.js";
-
-// ── Utilities ───────────────────────────────────────────────────────────────
-
-export { getDefaultCacheDir } from "./utils/xdg.js";

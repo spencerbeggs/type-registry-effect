@@ -26,7 +26,6 @@
 	"scripts": {
 		"build": "turbo run build:dev build:prod --log-order=grouped --log-prefix=none",
 		"build:dev": "node savvy.build.ts --target dev",
-		"build:meta": "node savvy.build.ts --target meta",
 		"build:prod": "node savvy.build.ts --target prod",
 		"ci:build": "CI=\"true\" turbo run build:dev build:prod --log-order=grouped --output-logs=full --log-prefix=none",
 		"ci:test": "CI=\"true\" vitest run --passWithNoTests",
@@ -44,14 +43,22 @@
 		"types:check": "tsgo --noEmit"
 	},
 	"dependencies": {
-		"semver-effect": "^0.2.1"
+		"@effect/sql": "catalog:silk",
+		"@effect/sql-sqlite-node": "^0.52.0",
+		"ajv": "^8.0.0",
+		"semver-effect": "^0.2.1",
+		"xdg-effect": "^2.0.0"
 	},
 	"devDependencies": {
+		"@effect/cluster": "catalog:silk",
 		"@effect/platform": "catalog:silk",
 		"@effect/platform-node": "catalog:silk",
+		"@effect/rpc": "catalog:silk",
 		"@savvy-web/bundler": "^0.7.0",
 		"@savvy-web/silk": "^1.2.0",
 		"@savvy-web/vitest": "^1.5.1",
+		"@types/node": "catalog:silk",
+		"@typescript/native-preview": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
 		"effect": "catalog:silk",
 		"typescript": "catalog:silk"

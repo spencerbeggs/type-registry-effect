@@ -1,106 +1,91 @@
 # Observability
 
-type-registry-effect emits structured log events and Effect Metrics from
-`TypeRegistry` namespace programs. Events flow through Effect's standard
-Logger layer; metrics are compatible with OpenTelemetry exporters.
+type-registry-effect is **silent by default** — it emits no `Effect.log` output.
+Diagnostics are available through two opt-in surfaces: a typed **event channel**
+for reacting programmatically, and **Effect Metrics** for aggregate counters and
+timers. Per-failure detail is also available through typed errors (see the
+[architecture overview](../architecture/overview.md)).
 
-## Log events
+## Typed event channel
 
-Events are emitted via `Effect.log` with `Effect.annotateLogs` at key
-lifecycle points. A custom Logger receives events as flat string
-annotations in its `annotations` parameter.
+`TypeRegistry` programs emit strongly-typed `RegistryEvent` values at key
+lifecycle points. A consumer opts in by providing a `TypeRegistryObserver` layer;
+when none is provided, emission is a no-op and costs nothing.
 
 ### Event types
 
-| Event | Level | When |
+`RegistryEvent` is a `Data.TaggedEnum`. Its variants:
+
+| Variant | Fields | When |
 | --- | --- | --- |
-| `package.version.resolved` | info | Version range resolved to specific version |
-| `cache.hit` | info | Package found in cache and still fresh |
-| `cache.miss` | debug | Package not in cache |
-| `cache.stale` | debug | Package in cache but TTL expired |
-| `package.fetch.start` | debug | HTTP download started |
-| `package.loaded` | info | Package successfully loaded (from cache or network) |
-| `package.load.failed` | warn | Package failed to load |
-| `packages.batch.start` | debug | Batch fetch started |
-| `packages.batch.complete` | info | Batch fetch completed |
-| `typescript.cache.created` | info | TypeScript virtual environment created |
+| `VersionResolved` | `package`, `requested`, `resolved` | A version range/tag resolved to a pinned version |
+| `VersionResolveFailed` | `package`, `requested`, `reason` | Version resolution failed |
+| `CacheHit` | `package`, `version`, `ageMinutes` | Package found fresh in cache |
+| `CacheStale` | `package`, `version`, `ageMinutes`, `ttlMinutes` | Cached but expired; refetching |
+| `CacheMiss` | `package`, `version` | Package not cached |
+| `FetchStart` | `package`, `version` | HTTP download started |
+| `FetchFailed` | `url`, `status`, `bodySnippet` | A request returned a non-2xx response |
+| `PackageLoaded` | `package`, `version`, `files`, `source`, `durationMs` | Package loaded (from cache or network) |
+| `PackageLoadFailed` | `package`, `version`, `kind`, `message` | Loading a package failed |
+| `BatchStart` | `total`, `packages` | A multi-package batch began |
+| `BatchComplete` | `loaded`, `failed`, `total`, `totalFiles`, `durationMs` | A batch finished |
 
-### Annotation keys
-
-Each event type has a specific set of flat string annotations. The
-`event` annotation is the discriminator. All values are strings (numeric
-values are stringified before emission).
-
-`LogEventSchema` in `events.ts` documents the exact annotation keys for
-each event type and can be used for runtime validation.
+`PackageLoadFailed.kind` is a stable classification (`not-found`,
+`version-range`, `schema`, `json`, `network`, `unknown`) so you can react without
+parsing error strings.
 
 ### Receiving events
 
-Provide a custom Logger layer to receive events:
+The lowest-friction way to subscribe is `layerCallback` — a plain callback, no
+`PubSub`/`Stream`/`Scope` ceremony:
 
 ```typescript
-import { Effect, Logger, LogLevel, Layer } from "effect";
-import { TypeRegistry, PackageSpec } from "type-registry-effect";
+import { Effect } from "effect";
+import { TypeRegistry, PackageSpec, layerCallback, RegistryEvent } from "type-registry-effect";
 import { NodeLayer } from "type-registry-effect/node";
 
-const myLogger = Logger.make(({ message, logLevel, annotations }) => {
-  const event = annotations.get("event") as string | undefined;
-
-  if (event === "package.loaded") {
-    const pkg = annotations.get("package") as string;
-    const source = annotations.get("source") as string;
-    const files = annotations.get("files") as string;
-    console.log(`Loaded ${pkg} (${files} files, ${source})`);
-  }
-
-  if (event === "package.load.failed") {
-    const pkg = annotations.get("package") as string;
-    const error = annotations.get("error") as string;
-    console.error(`Failed: ${pkg}: ${error}`);
-  }
-});
+const observer = layerCallback((event) =>
+  RegistryEvent.$match(event, {
+    PackageLoaded: ({ package: pkg, files, source }) =>
+      console.log(`Loaded ${pkg} (${files} files, ${source})`),
+    PackageLoadFailed: ({ package: pkg, kind, message }) =>
+      console.error(`Failed: ${pkg} [${kind}]: ${message}`),
+    BatchComplete: ({ loaded, total }) => console.log(`Batch: ${loaded}/${total}`),
+    // all other variants ignored
+    _: () => {},
+  }),
+);
 
 const program = TypeRegistry.getVFS([
   new PackageSpec({ name: "zod", version: "3.23.8" }),
 ]);
 
 await Effect.runPromise(
-  program.pipe(
-    Effect.provide(NodeLayer),
-    Effect.provide(Logger.replace(Logger.defaultLogger, myLogger)),
-    Effect.provide(Logger.minimumLogLevel(LogLevel.Debug)),
-  ),
+  program.pipe(Effect.provide(observer), Effect.provide(NodeLayer)),
 );
 ```
 
-### Type narrowing
+`RegistryEvent` provides `$match` (exhaustive handling) and `$is` (refinement),
+so you never match on raw strings. For custom wiring, implement the observer
+service directly — its shape is a single `emit(event)` method, so you can back it
+with a `PubSub`, a `Stream` sink, your own logger, or metrics. `layerNoop` is an
+explicit "drop all events" layer, handy in tests.
 
-The `LogEvent` type is a discriminated union -- narrow on the `event`
-field:
+### Migrating from the log-annotation API
 
-```typescript
-import type { LogEvent } from "type-registry-effect";
-
-function handleAnnotations(event: LogEvent): void {
-  switch (event.event) {
-    case "cache.hit":
-      console.log(`cached: ${event.package}@${event.version}`);
-      break;
-    case "package.loaded":
-      console.log(`loaded ${event.files} files from ${event.source}`);
-      break;
-    case "packages.batch.complete":
-      console.log(`batch: ${event.loaded}/${event.total}`);
-      break;
-  }
-}
-```
+Earlier versions emitted diagnostics via `Effect.log` + `Effect.annotateLogs`,
+intercepted by providing a custom `Logger` layer. That approach is gone: the
+library no longer logs, and the `LogEventSchema` / `LogEvent` exports are
+`@deprecated` (still exported for backward compatibility, removal deferred to a
+future major). Replace any `Logger.replace(...)` interception with a
+`TypeRegistryObserver` layer as shown above — and note that event fields are now
+properly typed (numbers are numbers, not stringified annotations).
 
 ## Metrics
 
 The library exports Effect Metrics that are automatically updated during
-TypeRegistry operations. Consumers can read metric values via
-`Metric.value` or connect an OpenTelemetry exporter.
+TypeRegistry operations. Read values via `Metric.value`, or connect an
+OpenTelemetry exporter.
 
 ### Counters
 
@@ -116,8 +101,8 @@ TypeRegistry operations. Consumers can read metric values via
 
 | Metric | Description |
 | --- | --- |
-| `packageLoadDuration` | Time to load a single package (ms) |
-| `batchDuration` | Time for a full `getVFS` batch (ms) |
+| `packageLoadDuration` | Time to load a single package |
+| `batchDuration` | Time for a full `getVFS` batch |
 
 ### Reading metrics
 
@@ -135,5 +120,5 @@ const program = Effect.gen(function* () {
 });
 ```
 
-Metric names use underscore-separated format compatible with
-Prometheus and OpenTelemetry (e.g., `type_registry_cache_hits`).
+Metric names use underscore-separated format compatible with Prometheus and
+OpenTelemetry (e.g., `type_registry_cache_hits_total`).

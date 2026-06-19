@@ -16,7 +16,7 @@
  * @packageDocumentation
  */
 
-import { Effect, Metric } from "effect";
+import { Effect, Metric, Option } from "effect";
 import type { CacheError } from "./errors/CacheError.js";
 import type { NetworkError } from "./errors/NetworkError.js";
 import { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
@@ -35,10 +35,44 @@ import type { CacheMetadata } from "./schemas/CacheMetadata.js";
 import type { PackageJson } from "./schemas/PackageJson.js";
 import type { PackageSpec } from "./schemas/PackageSpec.js";
 import type { ResolvedModule } from "./schemas/ResolvedModule.js";
-import type { VirtualFileSystem } from "./services/CacheService.js";
+import type { CachePruneResult, VirtualFileSystem } from "./services/CacheService.js";
 import { CacheService } from "./services/CacheService.js";
 import { PackageFetcher } from "./services/PackageFetcher.js";
+import { RegistryEvent, emitEvent } from "./services/TypeRegistryObserver.js";
 import { TypeResolver } from "./services/TypeResolver.js";
+
+/**
+ * Classify a per-package load failure into a stable {@link RegistryEvent}
+ * `PackageLoadFailed` kind, so consumers can react without parsing error
+ * strings. Network/CDN failures carry an HTTP status in their message (see the
+ * fetch helpers), which lets us distinguish a rejected version range from a
+ * genuinely missing package.
+ */
+const classifyLoadError = (
+	error: unknown,
+): "not-found" | "version-range" | "schema" | "json" | "network" | "unknown" => {
+	const tag =
+		typeof error === "object" && error !== null && "_tag" in error ? (error as { _tag: unknown })._tag : undefined;
+	const raw =
+		typeof error === "object" && error !== null && "message" in error
+			? String((error as { message: unknown }).message)
+			: String(error);
+	const m = raw.toLowerCase();
+	if (m.includes("version range") || m.includes("not a version")) return "version-range";
+	switch (tag) {
+		case "PackageNotFoundError":
+			return "not-found";
+		case "ParseError":
+			if (m.includes("json parse")) return "json";
+			if (m.includes("schema validation")) return "schema";
+			return "unknown";
+		case "NetworkError":
+			if (m.includes("404") || m.includes("not found") || m.includes("couldn't find")) return "not-found";
+			return "network";
+		default:
+			return "unknown";
+	}
+};
 
 /**
  * Check whether a package already exists in the disk cache.
@@ -123,11 +157,7 @@ export const fetchAndCache = (
 		const cache = yield* CacheService;
 		const fetcher = yield* PackageFetcher;
 
-		yield* Effect.logDebug(`Fetching ${pkg.toString()}`).pipe(
-			Effect.annotateLogs("event", "package.fetch.start"),
-			Effect.annotateLogs("package", pkg.name),
-			Effect.annotateLogs("version", pkg.version),
-		);
+		yield* emitEvent(RegistryEvent.FetchStart({ package: pkg.name, version: pkg.version }));
 
 		// Fetch package.json
 		const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
@@ -211,87 +241,66 @@ export const getPackageVFS = (
 		const cache = yield* CacheService;
 		const autoFetch = options?.autoFetch ?? true;
 		const startTime = Date.now();
-		const exists = yield* cache.exists(pkg);
+		// Metadata lives in the SQLite store; `readMetadata` returns `None` when the
+		// entry is absent or its TTL has expired (expiry evicts on read). Disk
+		// presence then distinguishes a stale cache (files present, metadata gone)
+		// from an outright miss.
+		const metaOpt = yield* cache.readMetadata(pkg);
+		const diskExists = yield* cache.exists(pkg);
 		let source: "cache" | "network" = "cache";
 
-		if (!exists && autoFetch) {
-			yield* Effect.logDebug(`Cache miss for ${pkg.toString()}`).pipe(
-				Effect.annotateLogs("event", "cache.miss"),
-				Effect.annotateLogs("package", pkg.name),
-				Effect.annotateLogs("version", pkg.version),
-			);
-			yield* Metric.increment(cacheMisses);
-			yield* fetchAndCache(pkg, options);
-			source = "network";
-		} else if (!exists && !autoFetch) {
-			yield* Effect.fail(
-				new PackageNotFoundError({
-					name: pkg.name,
+		if (Option.isSome(metaOpt)) {
+			// Live metadata entry — cache hit.
+			yield* emitEvent(
+				RegistryEvent.CacheHit({
+					package: pkg.name,
 					version: pkg.version,
-					message: `Package ${pkg.toString()} is not cached and autoFetch is disabled`,
+					ageMinutes: Math.round((Date.now() - metaOpt.value.cachedAt) / 60000),
 				}),
 			);
-		} else if (exists && autoFetch) {
-			// Check TTL staleness — re-fetch if cache entry has expired
-			const metaResult = yield* cache.readMetadata(pkg).pipe(
-				Effect.map((meta) => ({
-					isStale: meta.ttl !== undefined ? meta.cachedAt + meta.ttl < Date.now() : false,
-					ageMinutes: (Date.now() - meta.cachedAt) / 60000,
-					ttlMinutes: meta.ttl !== undefined ? meta.ttl / 60000 : undefined,
-				})),
-				Effect.catchAll(() =>
-					Effect.succeed({
-						isStale: false,
-						ageMinutes: 0,
-						ttlMinutes: undefined as number | undefined,
-					}),
-				),
-			);
-
-			if (metaResult.isStale) {
-				yield* Effect.logDebug(`Cache stale for ${pkg.toString()}`).pipe(
-					Effect.annotateLogs("event", "cache.stale"),
-					Effect.annotateLogs("package", pkg.name),
-					Effect.annotateLogs("version", pkg.version),
-					Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
-					Effect.annotateLogs("ttlMinutes", String(Math.round(metaResult.ttlMinutes ?? 0))),
+			yield* Metric.increment(cacheHits);
+		} else if (diskExists) {
+			// Files on disk but no live metadata (expired/evicted) — stale.
+			if (autoFetch) {
+				yield* emitEvent(
+					RegistryEvent.CacheStale({ package: pkg.name, version: pkg.version, ageMinutes: 0, ttlMinutes: 0 }),
 				);
 				yield* Metric.increment(cacheStale);
 				yield* fetchAndCache(pkg, options);
 				source = "network";
 			} else {
-				yield* Effect.log(`Cache hit for ${pkg.toString()}`).pipe(
-					Effect.annotateLogs("event", "cache.hit"),
-					Effect.annotateLogs("package", pkg.name),
-					Effect.annotateLogs("version", pkg.version),
-					Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
-				);
+				// Serve the on-disk files without refetching.
+				yield* emitEvent(RegistryEvent.CacheHit({ package: pkg.name, version: pkg.version, ageMinutes: 0 }));
 				yield* Metric.increment(cacheHits);
 			}
 		} else {
-			// exists && !autoFetch
-			const metaResult = yield* cache.readMetadata(pkg).pipe(
-				Effect.map((meta) => ({ ageMinutes: (Date.now() - meta.cachedAt) / 60000 })),
-				Effect.catchAll(() => Effect.succeed({ ageMinutes: 0 })),
-			);
-			yield* Effect.log(`Cache hit for ${pkg.toString()}`).pipe(
-				Effect.annotateLogs("event", "cache.hit"),
-				Effect.annotateLogs("package", pkg.name),
-				Effect.annotateLogs("version", pkg.version),
-				Effect.annotateLogs("ageMinutes", String(Math.round(metaResult.ageMinutes))),
-			);
-			yield* Metric.increment(cacheHits);
+			// Nothing cached — miss.
+			if (autoFetch) {
+				yield* emitEvent(RegistryEvent.CacheMiss({ package: pkg.name, version: pkg.version }));
+				yield* Metric.increment(cacheMisses);
+				yield* fetchAndCache(pkg, options);
+				source = "network";
+			} else {
+				yield* Effect.fail(
+					new PackageNotFoundError({
+						name: pkg.name,
+						version: pkg.version,
+						message: `Package ${pkg.toString()} is not cached and autoFetch is disabled`,
+					}),
+				);
+			}
 		}
 
 		const vfs = yield* cache.getVFS(pkg);
 		const durationMs = Date.now() - startTime;
-		yield* Effect.log(`Loaded ${pkg.toString()} (${vfs.size} files, ${source})`).pipe(
-			Effect.annotateLogs("event", "package.loaded"),
-			Effect.annotateLogs("package", pkg.name),
-			Effect.annotateLogs("version", pkg.version),
-			Effect.annotateLogs("files", String(vfs.size)),
-			Effect.annotateLogs("source", source),
-			Effect.annotateLogs("durationMs", String(durationMs)),
+		yield* emitEvent(
+			RegistryEvent.PackageLoaded({
+				package: pkg.name,
+				version: pkg.version,
+				files: vfs.size,
+				source,
+				durationMs,
+			}),
 		);
 		yield* Metric.increment(packagesLoaded);
 		return vfs;
@@ -353,11 +362,7 @@ export const getVFS = (
 	const inner = Effect.gen(function* () {
 		const startTime = Date.now();
 
-		yield* Effect.logDebug(`Fetching VFS for ${packages.length} package(s)`).pipe(
-			Effect.annotateLogs("event", "packages.batch.start"),
-			Effect.annotateLogs("total", String(packages.length)),
-			Effect.annotateLogs("packages", packages.map((p) => p.toString()).join(", ")),
-		);
+		yield* emitEvent(RegistryEvent.BatchStart({ total: packages.length, packages: packages.map((p) => p.toString()) }));
 
 		const results = yield* Effect.forEach(
 			packages,
@@ -366,11 +371,13 @@ export const getVFS = (
 					Effect.map((vfs) => ({ _tag: "ok" as const, vfs, pkg })),
 					Effect.catchAll((error) =>
 						Effect.gen(function* () {
-							yield* Effect.logWarning(`Failed to load ${pkg.toString()}: ${String(error)}`).pipe(
-								Effect.annotateLogs("event", "package.load.failed"),
-								Effect.annotateLogs("package", pkg.name),
-								Effect.annotateLogs("version", pkg.version),
-								Effect.annotateLogs("error", String(error)),
+							yield* emitEvent(
+								RegistryEvent.PackageLoadFailed({
+									package: pkg.name,
+									version: pkg.version,
+									kind: classifyLoadError(error),
+									message: String(error),
+								}),
 							);
 							yield* Metric.increment(packagesFailed);
 							return { _tag: "err" as const, pkg, error };
@@ -398,15 +405,16 @@ export const getVFS = (
 		const durationMs = Date.now() - startTime;
 		const loadedCount = packages.length - errors.length;
 
-		yield* Effect.log(
-			`Batch complete: ${loadedCount}/${packages.length} packages (${totalFiles} files, ${durationMs}ms)`,
-		).pipe(
-			Effect.annotateLogs("event", "packages.batch.complete"),
-			Effect.annotateLogs("loaded", String(loadedCount)),
-			Effect.annotateLogs("failed", String(errors.length)),
-			Effect.annotateLogs("total", String(packages.length)),
-			Effect.annotateLogs("totalFiles", String(totalFiles)),
-			Effect.annotateLogs("durationMs", String(durationMs)),
+		// Emit a typed event for programmatic consumers (no-op unless an
+		// observer layer is provided; see TypeRegistryObserver).
+		yield* emitEvent(
+			RegistryEvent.BatchComplete({
+				loaded: loadedCount,
+				failed: errors.length,
+				total: packages.length,
+				totalFiles,
+				durationMs,
+			}),
 		);
 
 		if (errors.length === packages.length && packages.length > 0) {
@@ -571,13 +579,14 @@ export const resolveVersion = (
 ): Effect.Effect<string, NetworkError | PackageNotFoundError, PackageFetcher> =>
 	Effect.gen(function* () {
 		const fetcher = yield* PackageFetcher;
-		const resolved = yield* fetcher.resolveVersion(name, ref);
-		yield* Effect.log(`Resolved ${name}: ${ref} -> ${resolved}`).pipe(
-			Effect.annotateLogs("event", "package.version.resolved"),
-			Effect.annotateLogs("package", name),
-			Effect.annotateLogs("requested", ref),
-			Effect.annotateLogs("resolved", resolved),
-		);
+		const resolved = yield* fetcher
+			.resolveVersion(name, ref)
+			.pipe(
+				Effect.tapError((error) =>
+					emitEvent(RegistryEvent.VersionResolveFailed({ package: name, requested: ref, reason: String(error) })),
+				),
+			);
+		yield* emitEvent(RegistryEvent.VersionResolved({ package: name, requested: ref, resolved }));
 		return resolved;
 	});
 
@@ -611,4 +620,40 @@ export const clearCache = (pkg: PackageSpec): Effect.Effect<void, CacheError, Ca
 	Effect.gen(function* () {
 		const cache = yield* CacheService;
 		yield* cache.remove(pkg);
+	});
+
+/**
+ * Prune every expired package from the cache.
+ *
+ * @remarks
+ * Evicts all metadata entries whose TTL has elapsed from the SQLite metadata
+ * store and deletes the corresponding on-disk directories. Packages cached
+ * without a TTL never expire and are never pruned. Call this periodically (for
+ * example on startup or a schedule) to keep the cache compact.
+ *
+ * @returns An Effect that succeeds with a {@link CachePruneResult} describing how
+ *   many packages were removed and which ones.
+ *
+ * @example
+ * ```typescript
+ * import { Effect } from "effect";
+ * import { TypeRegistry } from "type-registry-effect";
+ * import { NodeLayer } from "type-registry-effect/node";
+ *
+ * const program = Effect.gen(function* () {
+ *   const { count, removed } = yield* TypeRegistry.pruneCache();
+ *   console.log(`Pruned ${count} package(s):`, removed);
+ * });
+ *
+ * await Effect.runPromise(Effect.provide(program, NodeLayer));
+ * ```
+ *
+ * @see {@link clearCache} to remove a single package
+ *
+ * @public
+ */
+export const pruneCache = (): Effect.Effect<CachePruneResult, CacheError, CacheService> =>
+	Effect.gen(function* () {
+		const cache = yield* CacheService;
+		return yield* cache.prune;
 	});

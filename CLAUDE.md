@@ -12,12 +12,9 @@ documentation tooling that needs type-aware code samples.
 
 ## Design Documentation
 
-- @.claude/design/type-registry-effect/architecture.md — service/layer
-  architecture, GenericTag pattern, platform abstraction
-- @.claude/design/type-registry-effect/cache-optimization.md — disk cache
-  strategy, XDG directories, TTL
-- @.claude/design/type-registry-effect/observability.md — event schema design,
-  logging integration (planned)
+- `@./.claude/design/type-registry-effect/architecture.md` — service/layer architecture, service tag patterns, `TypeRegistryObserver`, platform abstraction, layer requirements
+- `@./.claude/design/type-registry-effect/cache-optimization.md` — SQLite metadata store (xdg-effect `SqliteCache`), friendly on-disk tree, TTL/staleness, `prune` vs `remove`
+- `@./.claude/design/type-registry-effect/observability.md` — opt-in `TypeRegistryObserver` / `RegistryEvent` channel (silent by default), metrics, fault tolerance
 
 ## Commands
 
@@ -63,8 +60,7 @@ pnpm vitest run __test__/TypeRegistry.integration.test.ts
 
 - `src/TypeRegistry.ts` — namespace module with composable Effect programs
 - `src/VirtualPackage.ts` — synthetic type packages from local declarations
-- `src/services/` — service interfaces (`CacheService`, `PackageFetcher`,
-  `TypeResolver`) using `Context.GenericTag` with interface/const merging
+- `src/services/` — service interfaces (`CacheService`, `PackageFetcher`, `TypeResolver`, `TypeRegistryObserver`); most use `Context.GenericTag` with interface/const merging
 - `src/layers/` — live implementations (`CacheServiceLive`,
   `PackageFetcherLive`, `TypeResolverLive`, `TypeRegistryLive`)
 - `src/schemas/` — Effect Schema types (`PackageSpec`, `CacheMetadata`,
@@ -80,8 +76,7 @@ pnpm vitest run __test__/TypeRegistry.integration.test.ts
 
 ### Patterns
 
-- Services use `Context.GenericTag` with interface/const declaration merging
-  (not `Context.Tag` class) to avoid `_base` forgotten exports in DTS bundling
+- Services use `Context.GenericTag` with interface/const declaration merging to avoid `_base` forgotten exports in DTS bundling. Exception: `TypeRegistryObserver` uses `Context.Tag` (it carries no DTS-bundled `*Base` value)
 - `CacheMetadata` uses `Schema.Struct` with manual interface (not
   `Schema.Class`) for the same reason
 - Error types use `Data.TaggedError` with exported `*Base` constants

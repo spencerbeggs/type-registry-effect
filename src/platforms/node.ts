@@ -2,7 +2,7 @@
  * Node.js platform layer and Promise convenience API for TypeRegistry.
  */
 
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
+import { NodeFileSystem, NodeHttpClient, NodePath } from "@effect/platform-node";
 import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 import {
 	createDefaultMapFromNodeModules,
@@ -11,17 +11,33 @@ import {
 } from "@typescript/vfs";
 import { Effect, Layer } from "effect";
 import * as ts from "typescript";
+import { AppDirsConfig, SqliteCache, XdgLive } from "xdg-effect";
 import { TypeRegistryLive } from "../layers/TypeRegistryLive.js";
 import type { PackageSpec } from "../schemas/PackageSpec.js";
-import type { VirtualFileSystem } from "../services/CacheService.js";
+import type { CachePruneResult, VirtualFileSystem } from "../services/CacheService.js";
 import * as TypeRegistry from "../TypeRegistry.js";
 
 /**
- * Node.js platform layer that provides FileSystem and HttpClient,
- * composed with all TypeRegistry service layers.
+ * XDG application config for type-registry-effect. The cache root and SQLite
+ * metadata database are resolved under the `type-registry-effect` namespace.
+ */
+const appConfig = new AppDirsConfig({ namespace: "type-registry-effect" });
+
+/**
+ * Infrastructure layer: XDG path resolution (`AppDirs`) plus the SQLite metadata
+ * store, with the SQLite DB located at `<cache>/metadata.db`. Requires only a
+ * `FileSystem` once composed.
+ */
+const InfraLayer = SqliteCache.XdgLive({ filename: "metadata.db" }).pipe(Layer.provideMerge(XdgLive(appConfig)));
+
+/**
+ * Node.js platform layer that provides FileSystem, HttpClient, AppDirs, and the
+ * SQLite metadata cache, composed with all TypeRegistry service layers.
  */
 export const NodeLayer = TypeRegistryLive.pipe(
+	Layer.provide(InfraLayer),
 	Layer.provide(NodeFileSystem.layer),
+	Layer.provide(NodePath.layer),
 	Layer.provide(NodeHttpClient.layerUndici),
 );
 
@@ -54,6 +70,11 @@ export const getVFS = (
  */
 export const resolveVersion = (name: string, ref: string): Promise<string> =>
 	runWithNodeLayer(TypeRegistry.resolveVersion(name, ref));
+
+/**
+ * Prune expired packages from the cache (Promise API).
+ */
+export const pruneCache = (): Promise<CachePruneResult> => runWithNodeLayer(TypeRegistry.pruneCache());
 
 /**
  * Create a TypeScript virtual environment cache for use with Twoslash

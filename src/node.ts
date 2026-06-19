@@ -56,6 +56,7 @@ export {
 	fetchAndCache,
 	getVFS,
 	hasCached,
+	pruneCache,
 	resolveVersion,
 } from "./platforms/node.js";
 
@@ -65,7 +66,7 @@ export type { FileTreeResponse } from "./schemas/FileTree.js";
 export type { PackageJson } from "./schemas/PackageJson.js";
 export { PackageSpec, PackageSpecBase } from "./schemas/PackageSpec.js";
 export { type ResolvedModule, ResolvedModuleBase } from "./schemas/ResolvedModule.js";
-export type { VirtualFileSystem } from "./services/CacheService.js";
+export type { CachePruneResult, VirtualFileSystem } from "./services/CacheService.js";
 export { CacheService } from "./services/CacheService.js";
 export type { PackageMetadata } from "./services/PackageFetcher.js";
 export { PackageFetcher } from "./services/PackageFetcher.js";

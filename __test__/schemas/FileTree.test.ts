@@ -16,6 +16,15 @@ describe("FileTreeResponse", () => {
 		expect(result.files[0].name).toBe("/lib/index.d.ts");
 	});
 
+	it("should decode a response with a null default (e.g. ink)", () => {
+		const result = Schema.decodeUnknownSync(FileTreeResponse)({
+			default: null,
+			files: [{ name: "/build/index.d.ts", hash: "abc123", time: "2024-01-01T00:00:00Z", size: 1234 }],
+		});
+		expect(result.default).toBeNull();
+		expect(result.files).toHaveLength(1);
+	});
+
 	it("should reject invalid response", () => {
 		expect(() =>
 			Schema.decodeUnknownSync(FileTreeResponse)({

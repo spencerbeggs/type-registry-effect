@@ -7,6 +7,7 @@ import { FileTreeResponse } from "../schemas/FileTree.js";
 import { PackageJson } from "../schemas/PackageJson.js";
 import type { PackageSpec } from "../schemas/PackageSpec.js";
 import { JSDELIVR_CDN, JSDELIVR_DATA_API, PackageFetcher, TYPE_FILE_PATTERN } from "../services/PackageFetcher.js";
+import { RegistryEvent, emitEvent } from "../services/TypeRegistryObserver.js";
 
 const PackageMetadataSchema = Schema.Struct({
 	versions: Schema.mutable(Schema.Array(Schema.String)),
@@ -38,20 +39,50 @@ export const PackageFetcherLive: Layer.Layer<PackageFetcher, never, HttpClient.H
 	Effect.gen(function* () {
 		const http = yield* HttpClient.HttpClient;
 
-		const fetchJson = (url: string) =>
+		// Fetch a response and fail fast on a non-2xx status. jsDelivr returns a
+		// plain-text error body (e.g. "Couldn't find version …") for 404s; without
+		// this check that text reaches `res.json`/`res.text` and surfaces as an
+		// opaque "JSON parse failed" further up. Emits a FetchFailed event carrying
+		// the status and a body snippet for diagnosis. Transport/timeout errors are
+		// retried; a non-2xx response is not (it is not transient).
+		const fetchOk = (url: string) =>
 			http.get(url).pipe(
-				Effect.flatMap((res) => res.json),
 				Effect.timeout(defaultTimeout),
 				Effect.retry(retrySchedule),
 				Effect.mapError((error) => new NetworkError({ url, message: String(error) })),
+				Effect.flatMap((res) =>
+					res.status >= 200 && res.status < 300
+						? Effect.succeed(res)
+						: res.text.pipe(
+								Effect.orElseSucceed(() => ""),
+								Effect.flatMap((body) => {
+									const bodySnippet = body.slice(0, 200);
+									return emitEvent(RegistryEvent.FetchFailed({ url, status: res.status, bodySnippet })).pipe(
+										Effect.zipRight(
+											Effect.fail(
+												new NetworkError({ url, status: res.status, message: `HTTP ${res.status}: ${bodySnippet}` }),
+											),
+										),
+									);
+								}),
+							),
+				),
+			);
+
+		const fetchJson = (url: string) =>
+			fetchOk(url).pipe(
+				Effect.flatMap((res) => res.json),
+				Effect.mapError((error) =>
+					error instanceof NetworkError ? error : new NetworkError({ url, message: String(error) }),
+				),
 			);
 
 		const fetchText = (url: string) =>
-			http.get(url).pipe(
+			fetchOk(url).pipe(
 				Effect.flatMap((res) => res.text),
-				Effect.timeout(defaultTimeout),
-				Effect.retry(retrySchedule),
-				Effect.mapError((error) => new NetworkError({ url, message: String(error) })),
+				Effect.mapError((error) =>
+					error instanceof NetworkError ? error : new NetworkError({ url, message: String(error) }),
+				),
 			);
 
 		const getFileTree = (pkg: PackageSpec) =>

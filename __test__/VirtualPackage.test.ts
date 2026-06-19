@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { VirtualPackage } from "../src/VirtualPackage.js";
 
@@ -84,15 +86,19 @@ describe("VirtualPackage", () => {
 			fs.rmSync(tmpDir, { recursive: true, force: true });
 		});
 
-		it("should load declarations from a .d.ts file", () => {
-			const pkg = VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath);
+		it("should load declarations from a .d.ts file", async () => {
+			const pkg = await Effect.runPromise(
+				VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath).pipe(Effect.provide(NodeFileSystem.layer)),
+			);
 			const vfs = pkg.generateVfs();
 
 			expect(vfs.get("node_modules/file-pkg/index.d.ts")).toBe("export declare function hello(): string;");
 		});
 
-		it("should generate correct package.json for file-based package", () => {
-			const pkg = VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath);
+		it("should generate correct package.json for file-based package", async () => {
+			const pkg = await Effect.runPromise(
+				VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath).pipe(Effect.provide(NodeFileSystem.layer)),
+			);
 			const vfs = pkg.generateVfs();
 
 			const raw = vfs.get("node_modules/file-pkg/package.json") ?? "";

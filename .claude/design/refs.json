@@ -1,0 +1,23 @@
+{
+	"version": 1,
+	"refs": [
+		{
+			"source": "CLAUDE.md",
+			"target": ".claude/design/type-registry-effect/architecture.md",
+			"hash": "a6317a1e496de057ed8a9ffcc718c82c75493a7a8c0229d95ddecc27926f99cb",
+			"recordedAt": "2026-06-19"
+		},
+		{
+			"source": "CLAUDE.md",
+			"target": ".claude/design/type-registry-effect/cache-optimization.md",
+			"hash": "e82528cf5520438e8fb78350c8d47ea75f6b06aeb9438575a1e75ddc5872c985",
+			"recordedAt": "2026-06-19"
+		},
+		{
+			"source": "CLAUDE.md",
+			"target": ".claude/design/type-registry-effect/observability.md",
+			"hash": "16df1f26f3129195016bd4044004aaa861401a78114ea592c4695ac4d3599a98",
+			"recordedAt": "2026-06-19"
+		}
+	]
+}

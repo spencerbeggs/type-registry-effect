@@ -119,25 +119,25 @@ const program = TypeRegistry.fetchAndCache(
 ### Permission denied
 
 ```text
-Error: EACCES: permission denied, mkdir '~/.cache/effect-type-registry'
+Error: EACCES: permission denied, mkdir '~/.type-registry-effect'
 ```
 
 Fix:
 
 ```bash
-mkdir -p ~/.cache/effect-type-registry
-chmod 755 ~/.cache/effect-type-registry
+mkdir -p ~/.type-registry-effect
+chmod 755 ~/.type-registry-effect
 ```
 
-Or use a custom cache directory:
+Or point the cache somewhere writable via the environment variable:
 
-```typescript
-import { makeNodeCacheLayer } from "type-registry-effect";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-const cacheLayer = makeNodeCacheLayer(join(tmpdir(), "my-types-cache"));
+```bash
+export XDG_CACHE_HOME=/tmp/cache   # cache root becomes /tmp/cache/type-registry-effect
 ```
+
+For a fully custom directory, build the layer with `makeNodeCacheLayer(dir)` and
+provide the required platform layers — see the
+[Caching guide](./caching.md#overriding-the-cache-directory).
 
 ### Cache corruption
 
@@ -153,7 +153,7 @@ yield* TypeRegistry.clearCache(
 Or remove the entire cache:
 
 ```bash
-rm -rf ~/.cache/effect-type-registry
+rm -rf ~/.type-registry-effect
 ```
 
 ## Network issues
