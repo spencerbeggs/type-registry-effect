@@ -79,12 +79,10 @@ public surface. The three core services keep the `GenericTag` pattern.
 - **@effect/platform-node** -- Node.js implementations of platform services
 - **@typescript/vfs** -- virtual TypeScript environments
 - **xdg-effect** -- `AppDirs` (XDG path resolution) and `SqliteCache` (SQLite
-  metadata store); currently a local `file:` override pending its release
+  metadata store)
 - **@effect/sql-sqlite-node** -- SQLite driver backing `SqliteCache`
 - **semver-effect** -- declared as a runtime dependency but not yet used in
   source (version resolution)
-
-`ajv` is also a declared dependency but is not imported anywhere in `src/`.
 
 ---
 

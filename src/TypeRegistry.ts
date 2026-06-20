@@ -58,6 +58,11 @@ const classifyLoadError = (
 			? String((error as { message: unknown }).message)
 			: String(error);
 	const m = raw.toLowerCase();
+	// These literals come from jsDelivr's plain-text error body (captured into
+	// NetworkError.message by `fetchOk`), e.g. "Couldn't find the requested
+	// version range" / "... is not a version". They are matched by substring
+	// because the CDN sends no structured error code; a phrasing change on
+	// jsDelivr's side would downgrade this to "network" (an acceptable fallback).
 	if (m.includes("version range") || m.includes("not a version")) return "version-range";
 	switch (tag) {
 		case "PackageNotFoundError":
