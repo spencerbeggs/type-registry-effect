@@ -1,4 +1,4 @@
-import type { Effect } from "effect";
+import type { Effect, Option } from "effect";
 import { Context } from "effect";
 import type { CacheError } from "../errors/CacheError.js";
 import type { CacheMetadata } from "../schemas/CacheMetadata.js";
@@ -26,6 +26,23 @@ import type { PackageSpec } from "../schemas/PackageSpec.js";
  * @public
  */
 export type VirtualFileSystem = Map<string, string>;
+
+/**
+ * Result of a {@link CacheService.prune | prune} operation.
+ *
+ * @remarks
+ * Reports how many cache entries were evicted and which packages they
+ * corresponded to. Each removed package has had both its SQLite metadata entry
+ * and its on-disk directory deleted.
+ *
+ * @public
+ */
+export interface CachePruneResult {
+	/** Number of expired entries removed. */
+	readonly count: number;
+	/** The packages whose cache was removed. */
+	readonly removed: ReadonlyArray<{ readonly name: string; readonly version: string }>;
+}
 
 /**
  * Effect service interface for the disk-based type definition cache.
@@ -59,7 +76,7 @@ export type VirtualFileSystem = Map<string, string>;
  * @public
  */
 export interface CacheService {
-	/** Check whether cached type definitions exist for a package. */
+	/** Check whether cached type definitions exist on disk for a package. */
 	readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, CacheError>;
 	/** Read a single cached file by relative path within the package cache directory. */
 	readonly read: (pkg: PackageSpec, filePath: string) => Effect.Effect<string, CacheError>;
@@ -67,14 +84,27 @@ export interface CacheService {
 	readonly write: (pkg: PackageSpec, filePath: string, content: string) => Effect.Effect<void, CacheError>;
 	/** List all cached file paths (relative) for a package. */
 	readonly listFiles: (pkg: PackageSpec) => Effect.Effect<ReadonlyArray<string>, CacheError>;
-	/** Read the `.metadata.json` sidecar for a cached package. */
-	readonly readMetadata: (pkg: PackageSpec) => Effect.Effect<CacheMetadata, CacheError>;
-	/** Write or overwrite the `.metadata.json` sidecar for a cached package. */
+	/**
+	 * Read the {@link CacheMetadata} for a cached package from the SQLite metadata
+	 * store. Returns `Option.none()` when no entry exists or the entry's TTL has
+	 * expired (expired entries are evicted on read).
+	 */
+	readonly readMetadata: (pkg: PackageSpec) => Effect.Effect<Option.Option<CacheMetadata>, CacheError>;
+	/**
+	 * Write or overwrite the {@link CacheMetadata} for a cached package in the
+	 * SQLite metadata store. The `ttl` field (if present) is applied as a native
+	 * expiry so the entry participates in {@link CacheService.prune | prune}.
+	 */
 	readonly writeMetadata: (pkg: PackageSpec, metadata: CacheMetadata) => Effect.Effect<void, CacheError>;
 	/** Build a {@link VirtualFileSystem} from the cache, suitable for an in-memory TS compiler host. */
 	readonly getVFS: (pkg: PackageSpec) => Effect.Effect<VirtualFileSystem, CacheError>;
-	/** Remove all cached data for a package, including metadata. */
+	/** Remove all cached data for a package: the on-disk files and the metadata entry. */
 	readonly remove: (pkg: PackageSpec) => Effect.Effect<void, CacheError>;
+	/**
+	 * Evict every expired metadata entry and delete the on-disk directory for each
+	 * one. Returns the number removed and the packages affected.
+	 */
+	readonly prune: Effect.Effect<CachePruneResult, CacheError>;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
+// biome-ignore lint/suspicious/noDeprecatedImports: this suite intentionally exercises the deprecated LogEventSchema to guard its back-compat behavior until it is removed in a future major.
 import { LogEventSchema } from "../src/events.js";
 
 const decode = Schema.decodeUnknownSync(LogEventSchema);

@@ -5,9 +5,10 @@
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as Path from "node:path";
-import { NodeFileSystem } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { Effect, Layer, Option } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SqliteCache } from "xdg-effect";
 import { NetworkError } from "../src/errors/NetworkError.js";
 import { makeNodeCacheLayer } from "../src/layers/CacheServiceLive.js";
 import { TypeResolverLive } from "../src/layers/TypeResolverLive.js";
@@ -17,6 +18,7 @@ import type { VirtualFileSystem } from "../src/services/CacheService.js";
 import { CacheService } from "../src/services/CacheService.js";
 import { PackageFetcher } from "../src/services/PackageFetcher.js";
 import { TypeResolver } from "../src/services/TypeResolver.js";
+import * as TypeRegistry from "../src/TypeRegistry.js";
 
 /**
  * Get fixture directory path for a package
@@ -124,7 +126,11 @@ function runWithMockServices<A, E>(
 	cacheDir: string,
 ): Promise<A> {
 	const testLayer = Layer.mergeAll(
-		makeNodeCacheLayer(cacheDir).pipe(Layer.provide(NodeFileSystem.layer)),
+		makeNodeCacheLayer(cacheDir).pipe(
+			Layer.provide(NodeFileSystem.layer),
+			Layer.provide(NodePath.layer),
+			Layer.provide(SqliteCache.Test()),
+		),
 		MockPackageFetcherLayer,
 		TypeResolverLive,
 	);
@@ -206,7 +212,7 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 
 				// Check if cached
 				const exists = yield* cache.exists(pkg);
-				const cachedMetadata = yield* cache.readMetadata(pkg);
+				const cachedMetadata = Option.getOrThrow(yield* cache.readMetadata(pkg));
 				const age = Date.now() - cachedMetadata.cachedAt;
 
 				return { exists, isStale: cachedMetadata.ttl !== undefined && age >= cachedMetadata.ttl };
@@ -383,6 +389,24 @@ describe("TypeRegistry (Unit Tests with Mocks)", () => {
 
 			expect(result.filePath).toBeTruthy();
 			expect(result.isTypeDefinition).toBe(true);
+		});
+	});
+
+	describe("pruneCache", () => {
+		it("should prune expired packages and report the removed set", async () => {
+			const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
+
+			const program = Effect.gen(function* () {
+				const cache = yield* CacheService;
+				yield* cache.write(pkg, "index.d.ts", "export {}");
+				yield* cache.writeMetadata(pkg, { version: pkg.version, cachedAt: Date.now(), ttl: 1 });
+				yield* Effect.sleep("10 millis");
+				return yield* TypeRegistry.pruneCache();
+			});
+
+			const result = await runWithMockServices(program, tempDir);
+			expect(result.count).toBeGreaterThanOrEqual(1);
+			expect(result.removed).toContainEqual({ name: "zod", version: "3.22.4" });
 		});
 	});
 

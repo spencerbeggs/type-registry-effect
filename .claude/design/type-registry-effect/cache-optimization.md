@@ -1,445 +1,118 @@
 ---
-status: stub
+status: current
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-03-11
-last-synced: 2026-03-11
-completeness: 0
+updated: 2026-06-19
+last-synced: 2026-06-19
+completeness: 75
 related:
   - ./architecture.md
   - ./observability.md
 dependencies: []
 ---
 
-# Cache Optimization - Performance
+# Cache: SQLite metadata and friendly file tree
 
-Brief one-sentence description of the performance characteristics being
-documented.
+The disk cache stores type definition files on disk and per-package metadata in a single SQLite database, with native TTL, expiry and prune.
 
 ## Table of Contents
 
 1. [Overview](#overview)
 2. [Current State](#current-state)
 3. [Rationale](#rationale)
-4. [Performance Characteristics](#performance-characteristics)
-5. [Optimization Strategies](#optimization-strategies)
-6. [Benchmarks](#benchmarks)
-7. [Monitoring](#monitoring)
-8. [Future Enhancements](#future-enhancements)
-9. [Related Documentation](#related-documentation)
+4. [On-disk layout](#on-disk-layout)
+5. [SQLite metadata](#sqlite-metadata)
+6. [Staleness and prune](#staleness-and-prune)
+7. [Removal ordering](#removal-ordering)
+8. [Cache directory resolution](#cache-directory-resolution)
+9. [Related documentation](#related-documentation)
 
 ---
 
 ## Overview
 
-Describe the performance goals and requirements (2-4 paragraphs).
+The cache splits storage across two backends: the bulky type definition payload (`.d.ts` and `package.json` files) lives on disk, and the small per-package metadata (cached-at timestamp, version, optional TTL) lives in an xdg-effect `SqliteCache` -- a single SQLite database with native TTL/expiry, prune and PubSub events. Earlier versions hand-rolled both the metadata sidecars (`.metadata.json` files) and the XDG path logic; both are gone.
 
-- What performance characteristics matter for this system?
-- What are the performance SLAs or targets?
-- What trade-offs were made for performance?
-
-### Performance Targets
-
-- Metric 1: Target value (e.g., < 100ms p95 latency)
-- Metric 2: Target value (e.g., > 1000 req/sec throughput)
-- Metric 3: Target value (e.g., < 50MB memory usage)
-
-### When to reference this document
-
-- When investigating performance issues
-- When adding features that may impact performance
-- When setting performance budgets
-- When optimizing hot paths
+The implementation lives in `src/layers/CacheServiceLive.ts`. The `CacheService` interface it satisfies is in `src/services/CacheService.ts`.
 
 ---
 
 ## Current State
 
-### Performance Metrics
-
-Current measured performance characteristics.
-
-#### Latency
-
-- **P50 (median):** Xms
-- **P95:** Xms
-- **P99:** Xms
-- **Max observed:** Xms
-
-#### Throughput
-
-- **Requests per second:** X req/sec
-- **Data processed:** X MB/sec
-- **Concurrent operations:** X
-
-#### Resource Usage
-
-- **CPU:** X% average, Y% peak
-- **Memory:** X MB average, Y MB peak
-- **Disk I/O:** X MB/sec
-- **Network:** X MB/sec
-
-### Performance Bottlenecks
-
-Known bottlenecks and their impact.
-
-#### Bottleneck 1: {Name}
-
-- **Location:** `src/path/to/code.ts:line`
-- **Impact:** X% of total execution time
-- **Why it exists:** Reasoning
-- **Mitigation:** Current workaround or plan
-
-#### Bottleneck 2: {Name}
-
-...
+- Files on disk under `<cacheRoot>/<name>/<version>/...`; metadata in one SQLite DB at `<cacheRoot>/metadata.db`.
+- TTL, expiry and prune are native to `SqliteCache`. `readMetadata` returns `Option.none()` when an entry is absent or its TTL has expired (expired entries are evicted on read).
+- `remove` deletes the metadata entry, then the on-disk directory (two explicit steps); `prune` is best-effort by design.
+- VFS output keys are unchanged: `node_modules/<name>/...`, fed directly into an in-memory TypeScript compiler host.
+- The cache root resolves via xdg-effect `AppDirs` for the `type-registry-effect` namespace.
 
 ---
 
 ## Rationale
 
-### Performance Design Decisions
+### Why move metadata into SQLite
 
-#### Decision 1: {Optimization Strategy}
+The previous `.metadata.json` sidecars meant every freshness check and every TTL decision was a filesystem stat plus a JSON read, and there was no way to ask "which entries have expired?" without walking the whole tree. `SqliteCache` gives native TTL/expiry semantics and a single `prune` query, so freshness and eviction become database operations rather than directory crawls. It also offers PubSub events for cache changes, available to hosts that want them.
 
-**Context:** What performance problem needed solving
+### Why the friendlier directory tree
 
-**Options considered:**
-
-1. Option A (Chosen):
-   - Performance impact: Description
-   - Trade-offs: What was sacrificed
-   - Why chosen: Reasoning
-
-2. Option B:
-   - Performance impact: Description
-   - Trade-offs: What was sacrificed
-   - Why rejected: Reasoning
-
-#### Decision 2: {Caching Strategy}
-
-...
-
-### Trade-offs
-
-Performance trade-offs made in the design.
-
-#### Trade-off 1: {Name}
-
-- **Performance gain:** What improved
-- **Cost:** What was sacrificed (complexity, memory, etc.)
-- **Justification:** Why it's worth it
-
-#### Trade-off 2: {Name}
-
-...
+The new layout makes the version its own directory level (`<name>/<version>/...`) instead of encoding it into the package directory name. Scoped packages then nest naturally (`@scope/name/version/…`) and unscoped packages sit flat (`name/version/…`). This keeps the on-disk tree human-readable and makes the cache key derivation a direct mirror of the path.
 
 ---
 
-## Performance Characteristics
+## On-disk layout
 
-### Time Complexity
-
-Algorithmic complexity analysis.
-
-#### Operation 1: {Name}
-
-- **Best case:** O(?)
-- **Average case:** O(?)
-- **Worst case:** O(?)
-- **Practical performance:** Description
-
-#### Operation 2: {Name}
-
-...
-
-### Space Complexity
-
-Memory usage analysis.
-
-#### Data Structure 1: {Name}
-
-- **Space complexity:** O(?)
-- **Practical memory usage:** X MB for Y items
-- **Growth rate:** Description
-
-#### Space Data Structure 2: {Name}
-
-...
-
-### I/O Characteristics
-
-Input/output performance characteristics.
-
-#### I/O Operation 1: {Name}
-
-- **I/O type:** Sequential / Random / Network
-- **Frequency:** X operations per request
-- **Volume:** X bytes per operation
-- **Optimization:** Caching / Batching / Async
-
-#### I/O Operation 2: {Name}
-
-...
-
----
-
-## Optimization Strategies
-
-### Implemented Optimizations
-
-#### Optimization 1: {Name}
-
-**What was optimized:** Description
-
-**Technique used:** Caching / Memoization / Lazy Loading / Batching / etc.
-
-**Implementation:**
-
-```typescript
-// Code example showing optimization
+```text
+<cacheRoot>/
+  metadata.db                       # SQLite metadata store
+  zod/3.23.8/...                    # unscoped: name/version/…
+  @effect/schema/1.0.0/...          # scoped: @scope/name/version/…
 ```
 
-**Performance impact:**
-
-- Before: X ms/req
-- After: Y ms/req
-- Improvement: Z% faster
-
-**Trade-offs:**
-
-- Increased memory usage by X MB
-- Added complexity in Y area
-
-#### Optimization 2: {Name}
-
-...
-
-### Caching Strategy
-
-How caching is used to improve performance.
-
-#### Cache 1: {Name}
-
-**What is cached:** Description
-
-**Cache type:** In-memory / Disk / Distributed
-
-**TTL:** X seconds/minutes/hours
-
-**Invalidation:** When and how cache is cleared
-
-**Hit rate:** X% (target: Y%)
-
-**Memory usage:** X MB
-
-#### Cache 2: {Name}
-
-...
-
-### Batching and Parallelization
-
-How operations are batched or parallelized.
-
-#### Batch Operation 1: {Name}
-
-**What is batched:** Description
-
-**Batch size:** X items
-
-**Batch interval:** X ms
-
-**Performance gain:** Y% improvement
-
-#### Parallel Operation 1: {Name}
-
-**What is parallelized:** Description
-
-**Concurrency level:** X concurrent operations
-
-**Performance gain:** Y% improvement
+VFS keys remain `node_modules/<name>/<relative-path>` regardless of the on-disk layout -- the disk tree is an implementation detail the VFS hides.
 
 ---
 
-## Benchmarks
+## SQLite metadata
 
-### Benchmark Results
+Metadata keys are colon-delimited, mirroring the directory layout: scoped packages become `@scope:name:version` (e.g. `@effect:schema:1.0.0`) and unscoped become `name:version` (e.g. `xdg-effect:1.0.0`). See `keyOf` and its inverse `keyToPackage` in `src/layers/CacheServiceLive.ts`.
 
-Detailed benchmark results and methodology.
-
-#### Benchmark 1: {Scenario}
-
-**Test scenario:** Description of what's being tested
-
-**Test data:** Size and characteristics of test data
-
-**Environment:**
-
-- CPU: Specification
-- Memory: Size
-- Disk: Type (SSD/HDD)
-
-**Results:**
-
-| Metric | Value |
-| :------ | :----- |
-| Throughput | X req/sec |
-| Latency (p50) | X ms |
-| Latency (p95) | X ms |
-| Latency (p99) | X ms |
-| Memory usage | X MB |
-| CPU usage | X% |
-
-**Running the benchmark:**
-
-```bash
-pnpm bench -- benchmark-name
-```
-
-#### Benchmark 2: {Scenario}
-
-...
-
-### Performance Regression Tests
-
-Tests that prevent performance regressions.
-
-**Location:** `src/**/*.bench.ts`
-
-**How to run:**
-
-```bash
-pnpm bench:ci
-```
-
-**Failure criteria:**
-
-- Latency regression > X%
-- Throughput regression > Y%
-- Memory increase > Z%
+The metadata value is the `CacheMetadata` schema (`src/schemas/CacheMetadata.ts`) encoded as JSON. When a TTL is present it is applied as the SQLite entry's native expiry, so the entry participates in `prune` automatically.
 
 ---
 
-## Monitoring
+## Staleness and prune
 
-### Production Metrics
+Freshness is decided in `getPackageVFS` (`src/TypeRegistry.ts`) from two signals -- a live metadata entry and the presence of the on-disk directory:
 
-Metrics tracked in production.
+- **Live metadata present** -> cache hit.
+- **Metadata `None` but on-disk directory present** -> stale (TTL expired and evicted, but the files remain). With `autoFetch` the package is refetched; otherwise the on-disk files are served as-is.
+- **Nothing present** -> miss.
 
-#### Metric 1: {Name}
-
-**What it measures:** Description
-
-**How it's collected:** Method/Tool
-
-**Alert threshold:** X value
-
-**Dashboard:** Link to dashboard
-
-#### Metric 2: {Name}
-
-...
-
-### Performance Alerts
-
-Alerts configured for performance degradation.
-
-#### Alert 1: {Name}
-
-**Condition:** Metric > threshold for duration
-
-**Severity:** Critical / Warning / Info
-
-**Action:** What to do when alerted
-
-#### Alert 2: {Name}
-
-...
-
-### Profiling
-
-How to profile performance issues.
-
-**Profiling tools:**
-
-- Tool 1: When to use it
-- Tool 2: When to use it
-
-**How to profile:**
-
-```bash
-# Command to run profiler
-node --prof src/index.js
-node --prof-process isolate-*.log
-```
-
-**Interpreting results:**
-
-- Look for: What to look for in profiles
-- Red flags: Warning signs
+`pruneCache()` (public program) evicts every expired metadata entry and deletes each one's on-disk directory, returning a `CachePruneResult` (`{ count, removed }`). Packages cached without a TTL never expire and are never pruned.
 
 ---
 
-## Future Enhancements
+## Removal ordering
 
-### Phase 1: Quick wins (next release)
+`remove` (single package) deletes the metadata entry, then the on-disk directory -- two explicit steps. It deliberately does **not** use SqliteCache's transactional `invalidate(key, onRemoved)` callback, because that callback only fires when a metadata row actually matched, and files can outlive their metadata: a TTL-expired entry is evicted from SQLite on read, leaving the on-disk files behind. Deleting metadata first means a crash between the two steps leaves harmless orphaned files (a later refetch overwrites them) rather than a phantom cache hit (metadata present, files gone).
 
-#### Enhancement 1
-
-- **What:** Description
-- **Expected impact:** X% improvement
-- **Effort:** Low / Medium / High
-
-#### Enhancement 2
-
-...
-
-### Phase 2: Medium-term (2-3 releases)
-
-#### Enhancement 3
-
-- **What:** Description
-- **Expected impact:** X% improvement
-- **Effort:** Low / Medium / High
-- **Trade-offs:** What might be sacrificed
-
-#### Enhancement 4
-
-...
-
-### Phase 3: Long-term (future consideration)
-
-#### Enhancement 5
-
-- **What:** Description
-- **Expected impact:** X% improvement
-- **Effort:** Low / Medium / High
-- **Risks:** Potential risks
-
-#### Enhancement 6
-
-...
+`prune` (bulk) evicts every expired metadata entry, then deletes each one's directory best-effort, ignoring per-directory failures. File removals are side effects outside the SQL transaction, so an orphaned directory is harmless -- a later refetch overwrites it. See the comments in `src/layers/CacheServiceLive.ts`.
 
 ---
 
-## Related Documentation
+## Cache directory resolution
 
-**Internal Design Docs:**
+The cache root resolves through xdg-effect `AppDirs` for the `type-registry-effect` namespace (configured in `src/platforms/node.ts`), replacing the deleted hand-rolled XDG helper.
 
-- [Architecture](./architecture.md) - Overall system architecture
-- [Observability](./observability.md) - Performance monitoring
+Note one behavioral quirk: `AppDirs` does not apply XDG per-type defaults. With `XDG_CACHE_HOME` unset, the cache root is `~/.type-registry-effect` (no `.cache` segment); with it set, the root is `$XDG_CACHE_HOME/type-registry-effect`. The SQLite DB lives at `<cacheRoot>/metadata.db`.
 
-**Package Documentation:**
-
-- `README.md` - Package overview
-- `CLAUDE.md` - Development guide
+For tests, pair `makeNodeCacheLayer(baseDir)` with `SqliteCache.Test()` to control the cache location directly.
 
 ---
 
-**Document Status:** This is a stub document created from the performance
-template. It needs to be populated with actual cache optimization details for
-the effect-type-registry package.
+## Related documentation
 
-**Next Steps:** Fill in cache optimization strategies, benchmark results, and
-current performance characteristics for the type registry caching system.
+- **Architecture:** `./architecture.md` -- service and layer composition, public API
+- **Observability:** `./observability.md` -- event channel, metrics, fault tolerance
+- **Main package README:** `README.md`

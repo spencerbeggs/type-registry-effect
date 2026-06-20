@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { FileSystem } from "@effect/platform";
+import type { PlatformError } from "@effect/platform/Error";
+import { Effect } from "effect";
 import type { VirtualFileSystem } from "./services/CacheService.js";
 
 /**
@@ -103,32 +105,50 @@ export class VirtualPackage {
 	 * Load a single `.d.ts` file from disk and create a virtual package from it.
 	 *
 	 * @remarks
-	 * Reads the file synchronously with `node:fs`. The resulting package has a
-	 * single `index.d.ts` entry whose content matches the file on disk.
+	 * Reads the file through the platform-agnostic
+	 * {@link @effect/platform#FileSystem | FileSystem} service, so it works on any
+	 * platform whose `FileSystem` layer is provided (Node, browser, etc.) rather
+	 * than binding to `node:fs`. The resulting package has a single `index.d.ts`
+	 * entry whose content matches the file on disk.
 	 *
 	 * @param name - Package name.
 	 * @param version - Semver version string.
 	 * @param filePath - Absolute or relative path to a `.d.ts` file.
-	 * @returns A new {@link VirtualPackage} instance.
+	 * @returns An Effect that succeeds with a new {@link VirtualPackage} instance,
+	 *   requiring a {@link @effect/platform#FileSystem | FileSystem}.
 	 *
 	 * @example
 	 * ```typescript
+	 * import { NodeFileSystem } from "@effect/platform-node";
+	 * import { Effect } from "effect";
 	 * import type { VirtualFileSystem } from "type-registry-effect";
 	 * import { VirtualPackage } from "type-registry-effect";
 	 *
-	 * const pkg = VirtualPackage.fromFile(
-	 *   "@my-org/api-types",
-	 *   "1.0.0",
-	 *   "./dist/api-types.d.ts",
-	 * );
-	 * const vfs: VirtualFileSystem = pkg.generateVfs();
+	 * const program = Effect.gen(function* () {
+	 *   const pkg = yield* VirtualPackage.fromFile(
+	 *     "@my-org/api-types",
+	 *     "1.0.0",
+	 *     "./dist/api-types.d.ts",
+	 *   );
+	 *   const vfs: VirtualFileSystem = pkg.generateVfs();
+	 *   return vfs;
+	 * });
+	 *
+	 * await Effect.runPromise(Effect.provide(program, NodeFileSystem.layer));
 	 * ```
 	 *
 	 * @public
 	 */
-	static fromFile(name: string, version: string, filePath: string): VirtualPackage {
-		const content = readFileSync(filePath, "utf-8");
-		return VirtualPackage.create(name, version, content);
+	static fromFile(
+		name: string,
+		version: string,
+		filePath: string,
+	): Effect.Effect<VirtualPackage, PlatformError, FileSystem.FileSystem> {
+		return Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const content = yield* fs.readFileString(filePath);
+			return VirtualPackage.create(name, version, content);
+		});
 	}
 
 	/**

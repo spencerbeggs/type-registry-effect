@@ -53,12 +53,13 @@ Manages disk-based storage of type definitions.
 - `read(pkg, filePath)` -- Read a cached file
 - `write(pkg, filePath, content)` -- Write a file to cache
 - `listFiles(pkg)` -- List all cached files for a package
-- `readMetadata(pkg)` -- Read cache metadata (version, timestamp, TTL)
-- `writeMetadata(pkg, metadata)` -- Write cache metadata
+- `readMetadata(pkg)` -- Read cache metadata; returns `Option<CacheMetadata>` (`None` when absent or expired)
+- `writeMetadata(pkg, metadata)` -- Write cache metadata to the SQLite store
 - `getVFS(pkg)` -- Generate a VFS map from cached files
-- `remove(pkg)` -- Delete a cached package
+- `remove(pkg)` -- Delete a cached package (files + metadata)
+- `prune` -- Evict all expired packages; returns a `CachePruneResult` (`{ count, removed }`)
 
-**Live implementation:** `CacheServiceLive` requires `FileSystem.FileSystem` from `@effect/platform`. The default cache directory follows the XDG Base Directory Specification (`~/.cache/effect-type-registry`).
+**Live implementation:** `CacheServiceLive` requires `FileSystem` and `Path` from `@effect/platform` plus xdg-effect's `SqliteCache` (metadata store) and `AppDirs` (cache-directory resolution). The cache root resolves to `$XDG_CACHE_HOME/type-registry-effect` (or `~/.type-registry-effect` when `XDG_CACHE_HOME` is unset). See the [Caching guide](../guides/caching.md) for the on-disk layout.
 
 ### PackageFetcher
 

@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-03-17
-last-synced: 2026-03-17
+updated: 2026-06-19
+last-synced: 2026-06-19
 completeness: 90
 related:
   - ./observability.md
@@ -64,13 +64,25 @@ implementations, keeping service interfaces platform-agnostic.
 7. **`*Base` exports for DTS bundling** -- error and data class base values
    are exported for api-extractor compatibility
 
+Exception: `TypeRegistryObserver` (the opt-in event service, see
+`src/services/TypeRegistryObserver.ts`) uses the `Context.Tag` **class**
+pattern with a separate `TypeRegistryObserverShape` interface, not the
+`GenericTag` merge. This is safe here because the observer is consumed via
+`Effect.serviceOption` (it never appears in a public effect signature whose
+DTS would surface the `_base`), and the class form gives the tag a clean
+public surface. The three core services keep the `GenericTag` pattern.
+
 ### Key Dependencies
 
 - **effect** -- core Effect runtime, Context, Layer, Schema, Data
-- **@effect/platform** -- `FileSystem`, `HttpClient` abstractions
+- **@effect/platform** -- `FileSystem`, `HttpClient`, `Path` abstractions
 - **@effect/platform-node** -- Node.js implementations of platform services
 - **@typescript/vfs** -- virtual TypeScript environments
-- **semver-effect** -- declared as a runtime dependency (version resolution)
+- **xdg-effect** -- `AppDirs` (XDG path resolution) and `SqliteCache` (SQLite
+  metadata store)
+- **@effect/sql-sqlite-node** -- SQLite driver backing `SqliteCache`
+- **semver-effect** -- declared as a runtime dependency but not yet used in
+  source (version resolution)
 
 ---
 
@@ -88,7 +100,8 @@ composable Effect programs.
   `ResolvedModule`); `Schema.Struct` with manual interface for `CacheMetadata`
 - Error layer: `Data.TaggedError` types with `*Base` exports in `src/errors/`
 - Service interfaces using `Context.GenericTag` with interface/const
-  declaration merging (NOT `Context.Tag` class pattern, NOT `*Shape` naming)
+  declaration merging (NOT `Context.Tag` class pattern, NOT `*Shape` naming),
+  with the documented `TypeRegistryObserver` exception
 - Layer implementations: `CacheServiceLive`, `PackageFetcherLive`,
   `TypeResolverLive`
 - Composed `TypeRegistryLive` layer
@@ -96,12 +109,14 @@ composable Effect programs.
 - Node.js platform layer (`type-registry-effect/node`) with `NodeLayer`
   (fully closed) and Promise-returning wrappers
 - `VirtualPackage` utility class for transient VFS generation
-- Structured log event system using Effect Schema (10 event types)
-- Structured log events wired into TypeRegistry programs via
-  `Effect.log` + `Effect.annotateLogs`
+- Typed event channel (`TypeRegistryObserver` / `RegistryEvent`) -- opt-in,
+  zero-cost by default; the library is silent by default. See
+  `observability.md`.
+- SQLite-backed cache metadata via xdg-effect `SqliteCache`, with native
+  TTL/expiry and a `prune` operation. See `cache-optimization.md`.
 - Effect Metrics module (`src/metrics.ts`) with counters and timer
   histograms actively tracked in TypeRegistry programs
-- Comprehensive test suite (unit, integration, schema, layer, logging,
+- Comprehensive test suite (unit, integration, schema, layer, events,
   and metrics tests)
 
 ### What Is Not Yet Implemented
@@ -110,6 +125,10 @@ composable Effect programs.
 - Browser platform support (planned for Phase 5)
 - `semver-effect` integration in version resolution (dependency declared but
   not yet used in source)
+
+The legacy `Effect.log` + `LogEventSchema` annotation system has been
+removed as the diagnostics surface; `LogEventSchema` / `LogEvent` remain
+exported but `@deprecated` (removal deferred to a future major).
 
 ---
 
@@ -417,8 +436,11 @@ export class TimeoutError extends TimeoutErrorBase<{
 
 ### Error Union Type
 
+The `src/errors/` barrel was removed; the union is now defined in
+`src/index.ts`:
+
 ```typescript
-// src/errors/index.ts
+// src/index.ts
 export type TypeRegistryError =
   | CacheError
   | NetworkError
@@ -452,51 +474,30 @@ Services use `Context.GenericTag` with **interface/const declaration merging**.
 Each service file defines an `interface` with the service methods and a `const`
 of the same name created via `Context.GenericTag<Interface>(identifier)`. This
 pattern was chosen over the `Context.Tag` class pattern to eliminate `_base`
-forgotten exports in DTS bundling. There are no separate `*Shape` interfaces.
+forgotten exports in DTS bundling. There are no separate `*Shape` interfaces
+for the three core services (the opt-in `TypeRegistryObserver` is a
+deliberate exception -- see below).
 
 Method signatures return `Effect<A, E>` with typed errors -- no `HttpClient` or
 `FileSystem` in method signatures since those are resolved within layers.
 
 ### CacheService
 
-```typescript
-// src/services/CacheService.ts
-import type { Effect } from "effect";
-import { Context } from "effect";
+See `src/services/CacheService.ts` for the full interface. The load-bearing
+points (some are breaking changes from the pre-SQLite cache):
 
-export type VirtualFileSystem = Map<string, string>;
+- `readMetadata` returns `Effect<Option<CacheMetadata>, CacheError>` --
+  `None` when the entry is absent or its TTL has expired (expiry evicts on
+  read). This is the signal `getPackageVFS` uses to distinguish a hit from a
+  stale entry.
+- `prune: Effect<CachePruneResult, CacheError>` -- evicts every expired
+  metadata entry and deletes its on-disk directory. `CachePruneResult` is
+  `{ count, removed: ReadonlyArray<{ name, version }> }`.
+- `remove` deletes both the on-disk files and the metadata entry.
 
-export interface CacheService {
-  readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, CacheError>;
-  readonly read: (
-    pkg: PackageSpec,
-    filePath: string,
-  ) => Effect.Effect<string, CacheError>;
-  readonly write: (
-    pkg: PackageSpec,
-    filePath: string,
-    content: string,
-  ) => Effect.Effect<void, CacheError>;
-  readonly listFiles: (
-    pkg: PackageSpec,
-  ) => Effect.Effect<ReadonlyArray<string>, CacheError>;
-  readonly readMetadata: (
-    pkg: PackageSpec,
-  ) => Effect.Effect<CacheMetadata, CacheError>;
-  readonly writeMetadata: (
-    pkg: PackageSpec,
-    metadata: CacheMetadata,
-  ) => Effect.Effect<void, CacheError>;
-  readonly getVFS: (
-    pkg: PackageSpec,
-  ) => Effect.Effect<VirtualFileSystem, CacheError>;
-  readonly remove: (pkg: PackageSpec) => Effect.Effect<void, CacheError>;
-}
-
-export const CacheService = Context.GenericTag<CacheService>(
-  "type-registry-effect/CacheService"
-);
-```
+The remaining methods (`exists`, `read`, `write`, `listFiles`,
+`writeMetadata`, `getVFS`) are unchanged in shape. See
+`cache-optimization.md` for the storage design behind these signatures.
 
 ### PackageFetcher
 
@@ -575,40 +576,36 @@ export const TypeResolver = Context.GenericTag<TypeResolver>(
 Note: `findTypeDefinition` maps JS file paths to their corresponding `.d.ts`
 counterparts.
 
+### TypeRegistryObserver
+
+An opt-in event service for programmatic consumers, defined in
+`src/services/TypeRegistryObserver.ts`. Unlike the three core services it is
+**not** part of `TypeRegistryLive` and is never required by a program's
+signature -- internal call sites emit through `emitEvent`, which resolves it
+via `Effect.serviceOption` (no-op unless a layer is provided). It uses the
+`Context.Tag` class pattern (the documented exception to principle 5/6). See
+`observability.md` for the full event model.
+
 ---
 
 ## Layer Composition
 
 ### CacheServiceLive
 
-Node.js filesystem-based cache using `@effect/platform` FileSystem with
-XDG-compliant paths. Provides a `makeNodeCacheLayer` factory for custom base
-directories.
+Disk cache for type definition files, with per-package metadata in an
+xdg-effect `SqliteCache`. Files live under `<cacheRoot>/<name>/<version>/...`
+and use the Effect `Path` service throughout (no `node:path`). See
+`cache-optimization.md` for the storage design and `src/layers/CacheServiceLive.ts`
+for the implementation.
 
-A shared `listRecursive` helper is extracted within the layer closure and
-reused by `listFiles`, `getVFS`, and other internal operations that need
-recursive directory traversal.
+The layer requirements changed with the SQLite migration:
 
-```typescript
-// src/layers/CacheServiceLive.ts
-export const makeNodeCacheLayer = (
-  baseDir?: string,
-): Layer.Layer<CacheService, never, FileSystem.FileSystem> =>
-  Layer.effect(CacheService, Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const cacheDir = baseDir ?? getDefaultCacheDir();
-
-    // Shared recursive directory listing helper
-    const listRecursive = (dir: string, relativeTo: string):
-      Effect.Effect<string[], CacheError, never> => /* ... */;
-
-    return { /* CacheService implementation */ };
-  }));
-
-export const CacheServiceLive: Layer.Layer<
-  CacheService, never, FileSystem.FileSystem
-> = makeNodeCacheLayer();
-```
+- `makeNodeCacheLayer(baseDir)` -- requires `FileSystem | SqliteCache |
+  Path.Path`. `baseDir` is now required (the old hand-rolled XDG default and
+  `getDefaultCacheDir` were removed). Pair it with `SqliteCache.Test()` for
+  tests.
+- `CacheServiceLive` -- requires `FileSystem | SqliteCache | AppDirs |
+  Path.Path`; it resolves the cache root from `AppDirs`.
 
 ### PackageFetcherLive
 
@@ -665,15 +662,15 @@ export const TypeResolverLive: Layer.Layer<TypeResolver> =
 
 ### TypeRegistryLive (Composed)
 
-Merges all three service layers. Requires `FileSystem` and `HttpClient` from
-the platform.
+Merges all three service layers. Its requirements grew with the SQLite cache
+and the `Path` service:
 
 ```typescript
 // src/layers/TypeRegistryLive.ts
 export const TypeRegistryLive: Layer.Layer<
   CacheService | PackageFetcher | TypeResolver,
   never,
-  FileSystem.FileSystem | HttpClient.HttpClient
+  FileSystem.FileSystem | HttpClient.HttpClient | Path.Path | AppDirs | SqliteCache
 > = Layer.mergeAll(CacheServiceLive, PackageFetcherLive, TypeResolverLive);
 ```
 
@@ -686,15 +683,13 @@ been implemented yet (see Phase 4 in Implementation Status).
 
 ### Node.js Platform -- IMPLEMENTED
 
-```typescript
-// src/platforms/node.ts
-import { NodeFileSystem, NodeHttpClient } from "@effect/platform-node";
-
-export const NodeLayer = TypeRegistryLive.pipe(
-  Layer.provide(NodeFileSystem.layer),
-  Layer.provide(NodeHttpClient.layerUndici),
-);
-```
+`NodeLayer` (`src/platforms/node.ts`) composes `TypeRegistryLive` with the
+infrastructure the SQLite cache needs. It provides `AppDirs` (xdg-effect
+`XdgLive` configured with the `type-registry-effect` namespace) plus
+`SqliteCache.XdgLive({ filename: "metadata.db" })`, then the Node platform
+layers `NodeFileSystem`, `NodePath` and `NodeHttpClient`. The result is a
+fully-closed layer with no remaining `R` requirements. See
+`cache-optimization.md` for the `AppDirs` cache-root resolution quirk.
 
 The Node platform module also provides a Promise convenience API that wraps
 TypeRegistry namespace functions:
@@ -703,6 +698,7 @@ TypeRegistry namespace functions:
 - `fetchAndCache(pkg, options?)` -- fetch and cache type definitions
 - `getVFS(packages, options?)` -- get combined VFS for multiple packages
 - `resolveVersion(name, ref)` -- resolve version reference
+- `pruneCache()` -- prune expired packages from the cache
 - `createTypeScriptCache(packages, compilerOptions)` -- create TypeScript
   virtual environment (uses `@typescript/vfs` directly, not via a service)
 
@@ -721,70 +717,26 @@ Not yet implemented. See Phase 5 in Implementation Status.
 
 ### Core Module
 
-The main export (`src/index.ts`) exposes:
+See `src/index.ts` for the authoritative export list. It exposes the
+`TypeRegistry` and `VirtualPackage` namespaces, the schemas, the error types
+(with their `*Base` constants for DTS bundling), the service tags, the layers,
+the metrics and the observer channel. Notable points that affect consumers:
 
-```typescript
-// Namespace modules
-export * as TypeRegistry from "./TypeRegistry.js";
-export * as VirtualPackage from "./VirtualPackage.js";
+- **Barrels removed.** `src/errors/index.ts` and `src/schemas/index.ts` are
+  gone; only the entry points (`src/index.ts`, `src/node.ts`) re-export. The
+  `TypeRegistryError` union is now defined in `src/index.ts` itself.
+- **Observer channel exported:** `TypeRegistryObserver`,
+  `TypeRegistryObserverShape`, `RegistryEvent`, `emitEvent`, `layerCallback`,
+  `layerNoop` (from `src/services/TypeRegistryObserver.js`).
+- **Cache additions exported:** `CachePruneResult` (and `pruneCache` via the
+  `TypeRegistry` namespace).
+- **`getDefaultCacheDir` removed** along with `src/utils/xdg.ts` (breaking) --
+  cache-root resolution now lives behind `AppDirs`.
+- **`LogEventSchema` / `LogEvent` still exported but `@deprecated`** -- the
+  legacy log-annotation surface, superseded by the observer channel.
 
-// Schemas (with *Base exports for DTS bundling)
-export { CacheMetadata } from "./schemas/CacheMetadata.js";
-export { FileTreeEntry, FileTreeResponse } from "./schemas/FileTree.js";
-export { PackageJson } from "./schemas/PackageJson.js";
-export { PackageSpec, PackageSpecBase } from "./schemas/PackageSpec.js";
-export { ResolvedModule, ResolvedModuleBase } from "./schemas/ResolvedModule.js";
-
-// Errors (with *Base exports for DTS bundling)
-export type { TypeRegistryError } from "./errors/index.js";
-export {
-  CacheError, CacheErrorBase,
-  NetworkError, NetworkErrorBase,
-  PackageNotFoundError, PackageNotFoundErrorBase,
-  ParseError, ParseErrorBase,
-  ResolutionError, ResolutionErrorBase,
-  TimeoutError, TimeoutErrorBase,
-} from "./errors/index.js";
-
-// Services (Context.GenericTag constants + VirtualFileSystem/PackageMetadata types)
-export { CacheService, type VirtualFileSystem }
-  from "./services/CacheService.js";
-export { PackageFetcher, type PackageMetadata }
-  from "./services/PackageFetcher.js";
-export { TypeResolver } from "./services/TypeResolver.js";
-
-// Layers
-export { CacheServiceLive, makeNodeCacheLayer }
-  from "./layers/CacheServiceLive.js";
-export { PackageFetcherLive } from "./layers/PackageFetcherLive.js";
-export { TypeRegistryLive } from "./layers/TypeRegistryLive.js";
-export { TypeResolverLive } from "./layers/TypeResolverLive.js";
-
-// Events
-export type { LogEvent } from "./events.js";
-export { LogEventSchema } from "./events.js";
-
-// Metrics
-export {
-  cacheHits,
-  cacheMisses,
-  cacheStale,
-  packagesLoaded,
-  packagesFailed,
-  packageLoadDuration,
-  batchDuration,
-} from "./metrics.js";
-
-// External types
-export type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
-
-// Utilities
-export { getDefaultCacheDir } from "./utils/xdg.js";
-```
-
-Note: `*Base` exports for both schemas (`PackageSpecBase`, `ResolvedModuleBase`)
-and errors (`CacheErrorBase`, `NetworkErrorBase`, etc.) are exported directly
-from the main `src/index.ts` entry point for DTS bundling compatibility.
+`*Base` exports for both schemas and errors are exported directly from the
+main entry point for DTS bundling compatibility.
 
 ### Node Entry Point
 
@@ -810,6 +762,8 @@ function returns a composable `Effect<A, E, R>`:
 - `getTypeEntries(pkg)` -- get all type entry points
 - `resolveVersion(name, ref)` -- resolve a version reference
 - `clearCache(pkg)` -- remove a package from cache
+- `pruneCache()` -- evict every expired package and return a
+  `CachePruneResult`
 
 Implementation note: `JSON.parse` calls in `resolveImport` and `getTypeEntries`
 are wrapped with `Effect.try` to produce typed `ParseError` values rather than
@@ -823,7 +777,10 @@ and multi-entry packages:
 
 - `VirtualPackage.create(name, version, declarations)` -- single entry
 - `VirtualPackage.createMultiEntry(name, version, entries)` -- multiple entries
-- `VirtualPackage.fromFile(name, version, filePath)` -- load from disk
+- `VirtualPackage.fromFile(name, version, filePath)` -- load from disk; now
+  returns `Effect<VirtualPackage, PlatformError, FileSystem>` (previously a
+  synchronous `readFileSync`), removing the last `node:fs` from the
+  platform-agnostic entry point
 - `instance.generateVfs()` -- produce VFS map
 
 ### Consumer Examples
@@ -878,8 +835,10 @@ __test__/
   CacheService.test.ts         -- CacheService tests
   TypeResolver.test.ts         -- TypeResolver layer tests
   TypeRegistry.unit.test.ts    -- TypeRegistry namespace unit tests
+  TypeRegistry.events.test.ts  -- observer event channel tests
   TypeRegistry.integration.test.ts -- Integration tests (live network)
-  xdg.test.ts                  -- XDG cache directory tests
+  events.test.ts               -- deprecated LogEventSchema tests
+  metrics.test.ts              -- Effect Metrics tests
   schemas/
     PackageSpec.test.ts
     CacheMetadata.test.ts
@@ -890,6 +849,8 @@ __test__/
     errors.test.ts
   layers/
     CacheServiceLive.test.ts
+  services/
+    TypeRegistryObserver.test.ts
   fixtures/                    -- Test fixture packages
     zod/
     ts-pattern/
@@ -944,13 +905,13 @@ used in source code. Planned integration points:
   with `semver-effect` operations
 - Use semver range parsing and satisfaction checking for version matching
 
-### Structured Logging Integration -- COMPLETE
+### Observability -- COMPLETE (typed event channel)
 
-The `events.ts` module defines Schema-validated log events. Events are
-wired into `TypeRegistry` programs via `Effect.log` + `Effect.annotateLogs`.
-An Effect Metrics module (`src/metrics.ts`) provides 5 counters and 2 timer
-histograms that are actively tracked in TypeRegistry programs. Consumers
-intercept events via Effect's Logger layer. See `observability.md` for
+Diagnostics flow through the opt-in `TypeRegistryObserver` / `RegistryEvent`
+channel and the Effect Metrics module (`src/metrics.ts`). The library is
+silent by default. The earlier `Effect.log` + `LogEventSchema` annotation
+system has been removed as the diagnostics surface (`LogEventSchema` /
+`LogEvent` remain exported but `@deprecated`). See `observability.md` for
 full details.
 
 ---

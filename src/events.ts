@@ -46,6 +46,11 @@ import * as Schema from "effect/Schema";
  *
  * @see {@link LogEvent} for the inferred TypeScript type
  *
+ * @deprecated TypeRegistry no longer emits diagnostics via `Effect.log`.
+ * Subscribe to typed events through `TypeRegistryObserver` / `RegistryEvent`
+ * instead. This schema is retained for backward compatibility and will be
+ * removed in a future major release.
+ *
  * @example
  * ```typescript
  * import { Logger } from "effect";

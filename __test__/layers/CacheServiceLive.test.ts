@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as Path from "node:path";
-import { NodeFileSystem } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
+import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { Effect, Layer, Option } from "effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { SqliteCache } from "xdg-effect";
 import { makeNodeCacheLayer } from "../../src/layers/CacheServiceLive.js";
 import { PackageSpec } from "../../src/schemas/PackageSpec.js";
 import { CacheService } from "../../src/services/CacheService.js";
@@ -14,7 +15,11 @@ describe("CacheServiceLive", () => {
 
 	beforeEach(() => {
 		tempDir = mkdtempSync(Path.join(tmpdir(), "cache-test-"));
-		testLayer = makeNodeCacheLayer(tempDir).pipe(Layer.provide(NodeFileSystem.layer));
+		testLayer = makeNodeCacheLayer(tempDir).pipe(
+			Layer.provide(NodeFileSystem.layer),
+			Layer.provide(NodePath.layer),
+			Layer.provide(SqliteCache.Test()),
+		);
 	});
 
 	afterEach(() => {
@@ -58,18 +63,17 @@ describe("CacheServiceLive", () => {
 				return yield* cache.readMetadata(pkg);
 			}),
 		);
-		expect(result).toHaveProperty("version", "3.22.4");
+		expect(Option.isSome(result)).toBe(true);
+		expect(Option.getOrThrow(result).version).toBe("3.22.4");
 	});
 
 	it("should generate VFS with node_modules prefix", async () => {
 		const pkg = new PackageSpec({ name: "zod", version: "3.22.4" });
-		const meta = { version: "3.22.4", cachedAt: Date.now() };
 		const result = await run(
 			Effect.gen(function* () {
 				const cache = yield* CacheService;
 				yield* cache.write(pkg, "package.json", '{"name":"zod"}');
 				yield* cache.write(pkg, "index.d.ts", "export declare const z: any;");
-				yield* cache.writeMetadata(pkg, meta);
 				return yield* cache.getVFS(pkg);
 			}),
 		);
