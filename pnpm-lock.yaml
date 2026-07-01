@@ -113,7 +113,7 @@ importers:
         specifier: ^1.6.4
         version: 1.6.4(typescript@6.0.3)
       '@vitest-agent/plugin':
-        specifier: ^1.0.0
+        specifier: ^1.1.2
         version: 1.1.2(8201ba438f98aa6270663cf23e7318a2)
       effect:
         specifier: catalog:silk
