@@ -1,5 +1,11 @@
 # type-registry-effect
 
+## 1.0.2
+
+### Bug Fixes
+
+* [`cc6b1bc`](https://github.com/spencerbeggs/type-registry-effect/commit/cc6b1bce39226dfd72bf60c086868b217f12441f) Fixes namespace type exports.
+
 ## 1.0.1
 
 ### Documentation
