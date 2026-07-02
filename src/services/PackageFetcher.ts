@@ -29,7 +29,7 @@ export interface PackageMetadata {
  * @remarks
  * All network calls are retried up to 3 times with exponential back-off
  * (starting at 100 ms) and are subject to a 30-second timeout. The live
- * implementation is provided by {@link PackageFetcherLive}.
+ * implementation is provided by `PackageFetcherLive`.
  *
  * @example
  * ```typescript
@@ -43,7 +43,7 @@ export interface PackageMetadata {
  * });
  * ```
  *
- * @see {@link PackageFetcherLive}
+ * @see `PackageFetcherLive`
  *
  * @public
  */
@@ -63,9 +63,10 @@ export interface PackageFetcher {
 }
 
 /**
- * Effect Context tag for the {@link PackageFetcher} service.
+ * Effect Context tag for the {@link (PackageFetcher:interface)} service.
  *
- * @see {@link PackageFetcherLive}
+ * @see `PackageFetcherLive`
+ * @public
  */
 export const PackageFetcher = Context.GenericTag<PackageFetcher>("type-registry-effect/PackageFetcher");
 

@@ -53,10 +53,10 @@ const fromSqlite =
 		new CacheError({ operation, path: key, message: error.reason });
 
 /**
- * Build the {@link CacheService} implementation for a resolved cache directory.
+ * Build the {@link (CacheService:interface)} implementation for a resolved cache directory.
  *
  * Files live on disk under `<cacheDir>/<name>/<version>/...`; per-package
- * metadata lives in the {@link SqliteCache} metadata store.
+ * metadata lives in the {@link xdg-effect#SqliteCache | SqliteCache} metadata store.
  */
 const makeCacheService = (
 	cacheDir: string,
@@ -202,13 +202,13 @@ const makeCacheService = (
 	});
 
 /**
- * Create a {@link CacheService} layer rooted at an explicit cache directory.
+ * Create a {@link (CacheService:interface)} layer rooted at an explicit cache directory.
  *
  * @param baseDir - Absolute path used as the cache root. Files are stored under
  *   `<baseDir>/<name>/<version>/...`.
- * @returns A `Layer` providing {@link CacheService}, requiring
+ * @returns A `Layer` providing {@link (CacheService:interface)}, requiring
  *   {@link @effect/platform#FileSystem | FileSystem} and the xdg-effect
- *   {@link SqliteCache} (for metadata).
+ *   {@link xdg-effect#SqliteCache | SqliteCache} (for metadata).
  *
  * @remarks
  * Use this when you want to control the cache location directly (for example in
@@ -226,11 +226,11 @@ export const makeNodeCacheLayer = (
 	Layer.effect(CacheService, makeCacheService(baseDir));
 
 /**
- * Default {@link CacheService} layer, rooted at the XDG cache directory for the
+ * Default {@link (CacheService:interface)} layer, rooted at the XDG cache directory for the
  * `type-registry-effect` namespace (resolved via xdg-effect's `AppDirs`).
  *
  * @remarks
- * Requires `AppDirs` (XDG path resolution), the xdg-effect {@link SqliteCache}
+ * Requires `AppDirs` (XDG path resolution), the xdg-effect {@link xdg-effect#SqliteCache | SqliteCache}
  * (metadata store), and a {@link @effect/platform#FileSystem | FileSystem}, all
  * provided at composition time. See `NodeLayer` in `"type-registry-effect/node"`
  * for the fully-wired Node.js layer.

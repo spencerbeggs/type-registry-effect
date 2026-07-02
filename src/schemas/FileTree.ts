@@ -23,7 +23,7 @@ import { Schema } from "effect";
  * });
  * ```
  *
- * @see {@link PackageFetcher.getFileTree}
+ * @see {@link (PackageFetcher:interface).getFileTree}
  * @public
  */
 export const FileTreeEntry = Schema.Struct({
@@ -33,6 +33,11 @@ export const FileTreeEntry = Schema.Struct({
 	size: Schema.Number,
 });
 
+/**
+ * Inferred TypeScript type for a single `FileTreeEntry` schema entry.
+ *
+ * @public
+ */
 export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
 
 /**
@@ -41,7 +46,7 @@ export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
  * @remarks
  * The response includes a `default` field indicating the package's default
  * entry file (`null` for packages that declare none) and a `files` array of
- * {@link FileTreeEntry} objects. This corresponds to the
+ * `FileTreeEntry` objects. This corresponds to the
  * `GET /v1/packages/npm/:package@:version/flat` endpoint.
  *
  * @example
@@ -59,7 +64,7 @@ export type FileTreeEntry = Schema.Schema.Type<typeof FileTreeEntry>;
  * });
  * ```
  *
- * @see {@link PackageFetcher.getFileTree}
+ * @see {@link (PackageFetcher:interface).getFileTree}
  * @see {@link https://www.jsdelivr.com/docs/data.jsdelivr.com | jsDelivr Data API}
  * @public
  */
@@ -71,4 +76,9 @@ export const FileTreeResponse = Schema.Struct({
 	files: Schema.Array(FileTreeEntry),
 });
 
+/**
+ * Inferred TypeScript type for the jsDelivr flat file tree API response.
+ *
+ * @public
+ */
 export type FileTreeResponse = Schema.Schema.Type<typeof FileTreeResponse>;

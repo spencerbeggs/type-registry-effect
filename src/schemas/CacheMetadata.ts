@@ -27,8 +27,8 @@ import { Schema } from "effect";
  * };
  * ```
  *
- * @see {@link CacheServiceLive}
- * @see {@link TypeRegistry.fetchAndCache}
+ * @see `CacheServiceLive` for the layer that writes this metadata
+ * @see `TypeRegistry.fetchAndCache` which populates this metadata on write
  * @public
  */
 export interface CacheMetadata {
@@ -38,9 +38,10 @@ export interface CacheMetadata {
 }
 
 /**
- * Effect Schema for validating and encoding {@link CacheMetadata}.
+ * Effect Schema for validating and encoding {@link (CacheMetadata:interface)}.
  *
- * @see {@link CacheMetadata}
+ * @see {@link (CacheMetadata:interface)}
+ * @public
  */
 export const CacheMetadata: Schema.Schema<CacheMetadata> = Schema.Struct({
 	version: Schema.String,

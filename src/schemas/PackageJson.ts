@@ -38,7 +38,7 @@ import { Schema } from "effect";
  * });
  * ```
  *
- * @see {@link TypeResolver}
+ * @see {@link (TypeResolver:interface)}
  * @public
  */
 export const PackageJson = Schema.Struct({
@@ -60,4 +60,9 @@ export const PackageJson = Schema.Struct({
 	devDependencies: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
 });
 
+/**
+ * Inferred TypeScript type for the validated `package.json` fields.
+ *
+ * @public
+ */
 export type PackageJson = Schema.Schema.Type<typeof PackageJson>;

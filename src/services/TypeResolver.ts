@@ -36,7 +36,7 @@ import type { ResolvedModule } from "../schemas/ResolvedModule.js";
  * });
  * ```
  *
- * @see {@link TypeResolverLive}
+ * @see `TypeResolverLive`
  *
  * @public
  */
@@ -80,8 +80,9 @@ export interface TypeResolver {
 }
 
 /**
- * Effect Context tag for the {@link TypeResolver} service.
+ * Effect Context tag for the {@link (TypeResolver:interface)} service.
  *
- * @see {@link TypeResolverLive}
+ * @see `TypeResolverLive`
+ * @public
  */
 export const TypeResolver = Context.GenericTag<TypeResolver>("type-registry-effect/TypeResolver");

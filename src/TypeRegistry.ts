@@ -1,20 +1,11 @@
-/**
- * TypeRegistry namespace module — composable Effect programs for managing
- * type definitions fetched from the jsDelivr CDN and stored in a local disk cache.
- *
- * @remarks
- * Every export in this module is a pure, composable {@link https://effect.website | Effect} program.
- * Programs require one or more service layers ({@link CacheService}, {@link PackageFetcher},
- * {@link TypeResolver}) that are provided at the edge of your application via
- * `Effect.provide`. For the standard Node.js implementation, use
- * `NodeLayer` from `"type-registry-effect/node"`.
- *
- * @see {@link CacheService} for the cache abstraction
- * @see {@link PackageFetcher} for the network abstraction
- * @see {@link TypeResolver} for the resolution abstraction
- *
- * @packageDocumentation
- */
+// TypeRegistry namespace module — composable Effect programs for managing
+// type definitions fetched from the jsDelivr CDN and stored in a local disk cache.
+//
+// Every export in this module is a pure, composable Effect program
+// (https://effect.website). Programs require one or more service layers
+// (CacheService, PackageFetcher, TypeResolver) that are provided at the edge
+// of your application via `Effect.provide`. For the standard Node.js
+// implementation, use `NodeLayer` from `"type-registry-effect/node"`.
 
 import { Effect, Metric, Option } from "effect";
 import type { CacheError } from "./errors/CacheError.js";

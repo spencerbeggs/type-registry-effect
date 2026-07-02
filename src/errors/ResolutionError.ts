@@ -1,18 +1,19 @@
 import { Data } from "effect";
 
 /**
- * @internal
- * Exported for declaration bundling (api-extractor). When `export *` re-exports
- * a class whose `extends` expression is an inline call like
- * `Data.TaggedError(...)`, TypeScript emits an un-nameable `_base` symbol in
- * the declaration file. Splitting the base into a named export gives the
- * bundler a stable reference.
+ * Base class for {@link ResolutionError}, exported for declaration bundling
+ * (api-extractor). When `export *` re-exports a class whose `extends` expression
+ * is an inline call like `Data.TaggedError(...)`, TypeScript emits an un-nameable
+ * `_base` symbol in the declaration file. Splitting the base into a named export
+ * gives the bundler a stable reference.
  *
  * @privateRemarks
  * This base constant must remain a named export so that api-extractor can
  * resolve the extends clause of {@link ResolutionError} to a stable
  * declaration. Without it the bundled `.d.ts` would contain an anonymous
  * `_base` symbol that cannot be referenced by downstream consumers.
+ *
+ * @public
  */
 export const ResolutionErrorBase = Data.TaggedError("ResolutionError");
 
@@ -46,7 +47,7 @@ export const ResolutionErrorBase = Data.TaggedError("ResolutionError");
  * await Effect.runPromise(Effect.provide(program, NodeLayer));
  * ```
  *
- * @see {@link TypeResolver.resolveImport}
+ * @see {@link (TypeResolver:interface).resolveImport}
  * @public
  */
 export class ResolutionError extends ResolutionErrorBase<{

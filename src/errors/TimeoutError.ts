@@ -1,10 +1,9 @@
 import { Data } from "effect";
 
 /**
- * @internal
- * Exported for declaration bundling (api-extractor). When `export *` re-exports
- * a class whose `extends` expression is an inline call like
- * `Data.TaggedError(...)`, TypeScript emits an un-nameable `_base` symbol in
+ * Base class for {@link TimeoutError}, exported for declaration bundling (api-extractor).
+ * When `export *` re-exports a class whose `extends` expression is an inline call
+ * like `Data.TaggedError(...)`, TypeScript emits an un-nameable `_base` symbol in
  * the declaration file. Splitting the base into a named export gives the
  * bundler a stable reference.
  *
@@ -13,6 +12,8 @@ import { Data } from "effect";
  * resolve the extends clause of {@link TimeoutError} to a stable
  * declaration. Without it the bundled `.d.ts` would contain an anonymous
  * `_base` symbol that cannot be referenced by downstream consumers.
+ *
+ * @public
  */
 export const TimeoutErrorBase = Data.TaggedError("TimeoutError");
 

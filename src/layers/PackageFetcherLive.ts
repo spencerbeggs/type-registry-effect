@@ -21,7 +21,7 @@ const retrySchedule = Schedule.exponential(Duration.millis(100)).pipe(Schedule.c
 const defaultTimeout = Duration.seconds(30);
 
 /**
- * Live {@link PackageFetcher} layer that fetches package metadata and type
+ * Live {@link (PackageFetcher:interface)} layer that fetches package metadata and type
  * definitions from the jsDelivr CDN.
  *
  * @remarks
@@ -30,7 +30,7 @@ const defaultTimeout = Duration.seconds(30);
  * {@link @effect/platform#HttpClient | HttpClient} layer to be provided at
  * composition time.
  *
- * @see {@link PackageFetcher}
+ * @see {@link (PackageFetcher:interface)}
  *
  * @public
  */

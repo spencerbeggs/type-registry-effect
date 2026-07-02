@@ -52,11 +52,44 @@ import type { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
 import type { ParseError } from "./errors/ParseError.js";
 import type { ResolutionError } from "./errors/ResolutionError.js";
 import type { TimeoutError } from "./errors/TimeoutError.js";
+import * as TypeRegistryModule from "./TypeRegistry.js";
+import * as VirtualPackageModule from "./VirtualPackage.js";
 
 // ── Namespace re-exports ────────────────────────────────────────────────────
+//
+// These are hand-written `namespace` declarations with one `export import`
+// alias per member, rather than `export * as X from "./y.js"`. The latter
+// compiles to a synthesized, source-mapless `X_d_exports` namespace in the
+// bundled declaration output that cannot carry a TSDoc release tag; a real
+// `namespace` declaration is an ordinary exported symbol and preserves
+// comments normally. Add a new `export import` line here whenever a member
+// is added to the underlying module.
 
-export * as TypeRegistry from "./TypeRegistry.js";
-export * as VirtualPackage from "./VirtualPackage.js";
+/**
+ * Composable Effect programs for fetching, caching, and resolving type
+ * definitions from npm packages via the jsDelivr CDN.
+ *
+ * @public
+ */
+export namespace TypeRegistry {
+	export import hasCached = TypeRegistryModule.hasCached;
+	export import fetchAndCache = TypeRegistryModule.fetchAndCache;
+	export import getPackageVFS = TypeRegistryModule.getPackageVFS;
+	export import getVFS = TypeRegistryModule.getVFS;
+	export import resolveImport = TypeRegistryModule.resolveImport;
+	export import getTypeEntries = TypeRegistryModule.getTypeEntries;
+	export import resolveVersion = TypeRegistryModule.resolveVersion;
+	export import clearCache = TypeRegistryModule.clearCache;
+	export import pruneCache = TypeRegistryModule.pruneCache;
+}
+/**
+ * Synthetic type packages built from local `.d.ts` declaration content.
+ *
+ * @public
+ */
+export namespace VirtualPackage {
+	export import VirtualPackage = VirtualPackageModule.VirtualPackage;
+}
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
