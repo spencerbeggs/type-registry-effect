@@ -1,23 +1,18 @@
-/**
- * Observer service — a typed, opt-in event channel for TypeRegistry operations.
- *
- * @remarks
- * TypeRegistry tracks aggregate counters via `Metric` and surfaces per-failure
- * detail via typed errors. Neither is the right surface for a *consumer* that
- * wants to react programmatically (drive a progress UI, build a report, fail
- * fast on a specific failure). This service is that surface: the library emits
- * strongly-typed {@link RegistryEvent} values, and the host application decides
- * how to handle them. The library performs no `Effect.log` output of its own.
- *
- * Emission is **opt-in and zero-cost by default**: internal call sites use
- * {@link emitEvent}, which resolves the observer via `Effect.serviceOption`, so
- * it adds no requirement to the program's type and is a no-op when no observer
- * layer is provided. A consumer opts in by providing {@link layerCallback} (or
- * their own {@link TypeRegistryObserver} layer backed by a callback, a `PubSub`,
- * a `Stream` sink, their own logger/metrics — whatever they like).
- *
- * @packageDocumentation
- */
+// Observer service — a typed, opt-in event channel for TypeRegistry operations.
+//
+// TypeRegistry tracks aggregate counters via `Metric` and surfaces per-failure
+// detail via typed errors. Neither is the right surface for a *consumer* that
+// wants to react programmatically (drive a progress UI, build a report, fail
+// fast on a specific failure). This service is that surface: the library emits
+// strongly-typed `RegistryEvent` values, and the host application decides
+// how to handle them. The library performs no `Effect.log` output of its own.
+//
+// Emission is opt-in and zero-cost by default: internal call sites use
+// `emitEvent`, which resolves the observer via `Effect.serviceOption`, so
+// it adds no requirement to the program's type and is a no-op when no observer
+// layer is provided. A consumer opts in by providing `layerCallback` (or
+// their own `TypeRegistryObserver` layer backed by a callback, a `PubSub`,
+// a `Stream` sink, their own logger/metrics — whatever they like).
 
 import { Context, Data, Effect, Layer, Option } from "effect";
 
@@ -79,7 +74,7 @@ export type RegistryEvent = Data.TaggedEnum<{
 }>;
 
 /**
- * Constructors and refinements for {@link RegistryEvent} (`RegistryEvent.BatchComplete({...})`, `RegistryEvent.$is`, `RegistryEvent.$match`).
+ * Constructors and refinements for {@link (RegistryEvent:type)} (`RegistryEvent.BatchComplete({...})`, `RegistryEvent.$is`, `RegistryEvent.$match`).
  *
  * @public
  */
@@ -143,7 +138,7 @@ export const layerCallback = (onEvent: (event: RegistryEvent) => void): Layer.La
 	});
 
 /**
- * Emit a {@link RegistryEvent} to the host's observer, if one is provided.
+ * Emit a {@link (RegistryEvent:type)} to the host's observer, if one is provided.
  *
  * @remarks
  * Resolved via `Effect.serviceOption`, so this adds **no** requirement to the

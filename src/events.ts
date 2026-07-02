@@ -1,17 +1,12 @@
-/**
- * Structured log event annotation schemas emitted by TypeRegistry operations.
- *
- * @remarks
- * Events are emitted via `Effect.log` with `Effect.annotateLogs`. The
- * {@link LogEventSchema} discriminated union describes the flat annotation
- * keys that a Logger receives for each event type. All annotation values
- * are strings (numeric values are stringified before emission).
- *
- * The Logger's own fields (`message`, `logLevel`, `timestamp`, `fiberId`)
- * are NOT part of the annotation map and are therefore not modeled here.
- *
- * @packageDocumentation
- */
+// Structured log event annotation schemas emitted by TypeRegistry operations.
+//
+// Events are emitted via `Effect.log` with `Effect.annotateLogs`. The
+// `LogEventSchema` discriminated union describes the flat annotation
+// keys that a Logger receives for each event type. All annotation values
+// are strings (numeric values are stringified before emission).
+//
+// The Logger's own fields (`message`, `logLevel`, `timestamp`, `fiberId`)
+// are NOT part of the annotation map and are therefore not modeled here.
 
 import * as Schema from "effect/Schema";
 

@@ -117,7 +117,7 @@ function extractTypesFromExport(exportValue: string | Record<string, unknown> | 
 // ── Layer ─────────────────────────────────────────────────────────────────────
 
 /**
- * Pure {@link TypeResolver} layer with no external dependencies.
+ * Pure {@link (TypeResolver:interface)} layer with no external dependencies.
  *
  * @remarks
  * Resolution is performed synchronously using only the data present in the
@@ -129,7 +129,7 @@ function extractTypesFromExport(exportValue: string | Record<string, unknown> | 
  * 4. Conventional extension swapping (`.js` to `.d.ts`) and `index.d.ts`
  *    fallback
  *
- * @see {@link TypeResolver}
+ * @see {@link (TypeResolver:interface)}
  *
  * @public
  */

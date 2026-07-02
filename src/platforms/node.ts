@@ -33,6 +33,8 @@ const InfraLayer = SqliteCache.XdgLive({ filename: "metadata.db" }).pipe(Layer.p
 /**
  * Node.js platform layer that provides FileSystem, HttpClient, AppDirs, and the
  * SQLite metadata cache, composed with all TypeRegistry service layers.
+ *
+ * @public
  */
 export const NodeLayer = TypeRegistryLive.pipe(
 	Layer.provide(InfraLayer),
@@ -48,17 +50,23 @@ const runWithNodeLayer = <A, E>(effect: Effect.Effect<A, E, Layer.Layer.Success<
 
 /**
  * Check if a package is cached (Promise API).
+ *
+ * @public
  */
 export const hasCached = (pkg: PackageSpec): Promise<boolean> => runWithNodeLayer(TypeRegistry.hasCached(pkg));
 
 /**
  * Fetch and cache a package's type definitions (Promise API).
+ *
+ * @public
  */
 export const fetchAndCache = (pkg: PackageSpec, options?: { readonly ttl?: number }): Promise<void> =>
 	runWithNodeLayer(TypeRegistry.fetchAndCache(pkg, options));
 
 /**
  * Get combined VFS for multiple packages (Promise API).
+ *
+ * @public
  */
 export const getVFS = (
 	packages: ReadonlyArray<PackageSpec>,
@@ -67,18 +75,24 @@ export const getVFS = (
 
 /**
  * Resolve a version reference to a specific version (Promise API).
+ *
+ * @public
  */
 export const resolveVersion = (name: string, ref: string): Promise<string> =>
 	runWithNodeLayer(TypeRegistry.resolveVersion(name, ref));
 
 /**
  * Prune expired packages from the cache (Promise API).
+ *
+ * @public
  */
 export const pruneCache = (): Promise<CachePruneResult> => runWithNodeLayer(TypeRegistry.pruneCache());
 
 /**
  * Create a TypeScript virtual environment cache for use with Twoslash
  * or other TypeScript language service consumers (Promise API).
+ *
+ * @public
  */
 export const createTypeScriptCache = async (
 	packages: ReadonlyArray<PackageSpec>,

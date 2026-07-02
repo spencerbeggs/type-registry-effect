@@ -11,8 +11,8 @@ import { PackageFetcherLive } from "./PackageFetcherLive.js";
 import { TypeResolverLive } from "./TypeResolverLive.js";
 
 /**
- * Composed layer providing {@link CacheService}, {@link PackageFetcher}, and
- * {@link TypeResolver} as a single unified layer.
+ * Composed layer providing {@link (CacheService:interface)}, {@link (PackageFetcher:interface)}, and
+ * {@link (TypeResolver:interface)} as a single unified layer.
  *
  * @remarks
  * This layer merges {@link CacheServiceLive}, {@link PackageFetcherLive}, and

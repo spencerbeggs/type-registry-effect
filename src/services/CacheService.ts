@@ -21,14 +21,14 @@ import type { PackageSpec } from "../schemas/PackageSpec.js";
  * ]);
  * ```
  *
- * @see {@link CacheService}
+ * @see {@link (CacheService:interface)}
  *
  * @public
  */
 export type VirtualFileSystem = Map<string, string>;
 
 /**
- * Result of a {@link CacheService.prune | prune} operation.
+ * Result of a {@link (CacheService:interface).prune | prune} operation.
  *
  * @remarks
  * Reports how many cache entries were evicted and which packages they
@@ -54,8 +54,8 @@ export interface CachePruneResult {
  * interface never interact with the filesystem directly.
  *
  * Use this tag to access cache methods inside an `Effect.gen` block. The live
- * implementation is provided by {@link CacheServiceLive} (or the lower-level
- * {@link makeNodeCacheLayer}).
+ * implementation is provided by `CacheServiceLive` (or the lower-level
+ * `makeNodeCacheLayer`).
  *
  * @example
  * ```typescript
@@ -70,8 +70,8 @@ export interface CachePruneResult {
  * });
  * ```
  *
- * @see {@link CacheServiceLive}
- * @see {@link makeNodeCacheLayer}
+ * @see `CacheServiceLive`
+ * @see `makeNodeCacheLayer`
  *
  * @public
  */
@@ -85,15 +85,15 @@ export interface CacheService {
 	/** List all cached file paths (relative) for a package. */
 	readonly listFiles: (pkg: PackageSpec) => Effect.Effect<ReadonlyArray<string>, CacheError>;
 	/**
-	 * Read the {@link CacheMetadata} for a cached package from the SQLite metadata
+	 * Read the {@link (CacheMetadata:interface)} for a cached package from the SQLite metadata
 	 * store. Returns `Option.none()` when no entry exists or the entry's TTL has
 	 * expired (expired entries are evicted on read).
 	 */
 	readonly readMetadata: (pkg: PackageSpec) => Effect.Effect<Option.Option<CacheMetadata>, CacheError>;
 	/**
-	 * Write or overwrite the {@link CacheMetadata} for a cached package in the
+	 * Write or overwrite the {@link (CacheMetadata:interface)} for a cached package in the
 	 * SQLite metadata store. The `ttl` field (if present) is applied as a native
-	 * expiry so the entry participates in {@link CacheService.prune | prune}.
+	 * expiry so the entry participates in {@link (CacheService:interface).prune | prune}.
 	 */
 	readonly writeMetadata: (pkg: PackageSpec, metadata: CacheMetadata) => Effect.Effect<void, CacheError>;
 	/** Build a {@link VirtualFileSystem} from the cache, suitable for an in-memory TS compiler host. */
@@ -108,9 +108,10 @@ export interface CacheService {
 }
 
 /**
- * Effect Context tag for the {@link CacheService} service.
+ * Effect Context tag for the {@link (CacheService:interface)} service.
  *
- * @see {@link CacheServiceLive}
- * @see {@link makeNodeCacheLayer}
+ * @see `CacheServiceLive`
+ * @see `makeNodeCacheLayer`
+ * @public
  */
 export const CacheService = Context.GenericTag<CacheService>("type-registry-effect/CacheService");

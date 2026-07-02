@@ -80,6 +80,8 @@ pnpm vitest run __test__/TypeRegistry.integration.test.ts
 - `CacheMetadata` uses `Schema.Struct` with manual interface (not
   `Schema.Class`) for the same reason
 - Error types use `Data.TaggedError` with exported `*Base` constants
+- `src/index.ts` re-exports `TypeRegistry` and `VirtualPackage` via hand-written `export namespace` declarations with one `export import Member = Module.Member` alias per member — never `export * as` (the DTS bundler synthesizes a comment-less `X_d_exports` wrapper that cannot carry a TSDoc release tag, causing ae-missing-release-tag; a real namespace declaration preserves its `@public` tag)
+- When adding an export to `src/TypeRegistry.ts` or `src/VirtualPackage.ts`, add a matching `export import` alias to the corresponding namespace in `src/index.ts`, or the member is silently missing from the public API
 - Platform deps (`FileSystem`, `HttpClient`) resolved within layers, not in
   service interfaces
 - `JSON.parse` calls wrapped with `Effect.try` for typed `ParseError`
