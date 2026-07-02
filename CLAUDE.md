@@ -80,8 +80,7 @@ pnpm vitest run __test__/TypeRegistry.integration.test.ts
 - `CacheMetadata` uses `Schema.Struct` with manual interface (not
   `Schema.Class`) for the same reason
 - Error types use `Data.TaggedError` with exported `*Base` constants
-- `src/index.ts` re-exports `TypeRegistry` and `VirtualPackage` via hand-written `export namespace` declarations with one `export import Member = Module.Member` alias per member — never `export * as` (the DTS bundler synthesizes a comment-less `X_d_exports` wrapper that cannot carry a TSDoc release tag, causing ae-missing-release-tag; a real namespace declaration preserves its `@public` tag)
-- When adding an export to `src/TypeRegistry.ts` or `src/VirtualPackage.ts`, add a matching `export import` alias to the corresponding namespace in `src/index.ts`, or the member is silently missing from the public API
+- `src/index.ts` re-exports `TypeRegistry` and `VirtualPackage` via `export * as X` — NEVER hand-written `export namespace X { export import ... }` aliases. The DTS bundler does not track `import =` alias references: it tree-shakes the target module away and leaves the aliases dangling against a namespace that is never declared, publishing broken typings (the 1.0.1 regression). `export * as` synthesizes a self-contained `X_d_exports` wrapper with all member declarations and TSDoc inlined; the wrapper cannot carry a release tag, so `ae-missing-release-tag` is suppressed by pattern `"_d_exports"` in `savvy.build.ts`
 - Platform deps (`FileSystem`, `HttpClient`) resolved within layers, not in
   service interfaces
 - `JSON.parse` calls wrapped with `Effect.try` for typed `ParseError`

@@ -52,18 +52,18 @@ import type { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
 import type { ParseError } from "./errors/ParseError.js";
 import type { ResolutionError } from "./errors/ResolutionError.js";
 import type { TimeoutError } from "./errors/TimeoutError.js";
-import * as TypeRegistryModule from "./TypeRegistry.js";
-import * as VirtualPackageModule from "./VirtualPackage.js";
 
 // ── Namespace re-exports ────────────────────────────────────────────────────
 //
-// These are hand-written `namespace` declarations with one `export import`
-// alias per member, rather than `export * as X from "./y.js"`. The latter
-// compiles to a synthesized, source-mapless `X_d_exports` namespace in the
-// bundled declaration output that cannot carry a TSDoc release tag; a real
-// `namespace` declaration is an ordinary exported symbol and preserves
-// comments normally. Add a new `export import` line here whenever a member
-// is added to the underlying module.
+// `export * as X` is the only namespace re-export form the DTS bundler
+// emits correctly: it synthesizes a self-contained `X_d_exports` namespace
+// with every member declaration (and its TSDoc) inlined. Hand-written
+// `export namespace X { export import ... }` aliases are NOT tracked by the
+// bundler — the target module is tree-shaken away and the aliases dangle
+// against a namespace that is never declared (the broken 1.0.1 typings).
+// The synthesized wrapper cannot carry a TSDoc release tag, so the
+// resulting ae-missing-release-tag diagnostic is suppressed by pattern
+// ("_d_exports") in savvy.build.ts.
 
 /**
  * Composable Effect programs for fetching, caching, and resolving type
@@ -71,25 +71,14 @@ import * as VirtualPackageModule from "./VirtualPackage.js";
  *
  * @public
  */
-export namespace TypeRegistry {
-	export import hasCached = TypeRegistryModule.hasCached;
-	export import fetchAndCache = TypeRegistryModule.fetchAndCache;
-	export import getPackageVFS = TypeRegistryModule.getPackageVFS;
-	export import getVFS = TypeRegistryModule.getVFS;
-	export import resolveImport = TypeRegistryModule.resolveImport;
-	export import getTypeEntries = TypeRegistryModule.getTypeEntries;
-	export import resolveVersion = TypeRegistryModule.resolveVersion;
-	export import clearCache = TypeRegistryModule.clearCache;
-	export import pruneCache = TypeRegistryModule.pruneCache;
-}
+export * as TypeRegistry from "./TypeRegistry.js";
+
 /**
  * Synthetic type packages built from local `.d.ts` declaration content.
  *
  * @public
  */
-export namespace VirtualPackage {
-	export import VirtualPackage = VirtualPackageModule.VirtualPackage;
-}
+export * as VirtualPackage from "./VirtualPackage.js";
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
 
