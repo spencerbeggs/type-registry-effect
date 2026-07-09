@@ -1,6 +1,6 @@
 {
 	"name": "type-registry-effect",
-	"version": "1.0.2",
+	"version": "1.1.0",
 	"private": true,
 	"description": "Fetch, cache, and resolve TypeScript type definitions from npm packages for use with Twoslash and documentation tooling. Built on Effect.",
 	"homepage": "https://github.com/spencerbeggs/type-registry-effect#readme",

@@ -1,5 +1,14 @@
 # type-registry-effect
 
+## 1.1.0
+
+### Dependencies
+
+* | Dependency              | Type           | Action | From | To                |                                                          |
+  | ----------------------- | -------------- | ------ | ---- | ----------------- | -------------------------------------------------------- |
+  | @effect/sql             | peerDependency | added  | —    | catalog:silkPeers |                                                          |
+  | @effect/sql-sqlite-node | peerDependency | added  | —    | catalog:silkPeers | Thanks [@spencerbeggs](https://github.com/spencerbeggs)! |
+
 ## 1.0.2
 
 ### Bug Fixes
