@@ -53,12 +53,12 @@
 		"@effect/rpc": "catalog:silk",
 		"@effect/sql": "catalog:silk",
 		"@effect/sql-sqlite-node": "catalog:silk",
-		"@savvy-web/bundler": "^1.1.8",
-		"@savvy-web/silk": "^2.2.0",
+		"@savvy-web/bundler": "^1.1.9",
+		"@savvy-web/silk": "^2.2.3",
 		"@types/node": "catalog:silk",
 		"@typescript/native-preview": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^1.1.7",
+		"@vitest-agent/plugin": "^1.1.8",
 		"effect": "catalog:silk",
 		"typescript": "catalog:silk"
 	},
@@ -84,7 +84,7 @@
 		"runtime": [
 			{
 				"name": "node",
-				"version": "26.4.0",
+				"version": "26.5.0",
 				"onFail": "ignore"
 			}
 		]
