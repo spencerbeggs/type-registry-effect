@@ -54,7 +54,7 @@
 		"@effect/sql": "catalog:silk",
 		"@effect/sql-sqlite-node": "catalog:silk",
 		"@savvy-web/bundler": "^1.1.11",
-		"@savvy-web/silk": "^2.3.1",
+		"@savvy-web/silk": "^2.3.2",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
 		"@vitest-agent/plugin": "^1.1.8",
