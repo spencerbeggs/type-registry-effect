@@ -39,7 +39,7 @@
 		"test:coverage": "vitest run --coverage",
 		"test:watch": "vitest --watch",
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",
-		"types:check": "tsgo --noEmit"
+		"types:check": "tsc --noEmit"
 	},
 	"dependencies": {
 		"semver-effect": "^0.3.1",
@@ -56,7 +56,6 @@
 		"@savvy-web/bundler": "^1.1.11",
 		"@savvy-web/silk": "^2.3.1",
 		"@types/node": "catalog:silk",
-		"@typescript/native-preview": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
 		"@vitest-agent/plugin": "^1.1.8",
 		"effect": "catalog:silk",
