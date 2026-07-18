@@ -49,7 +49,7 @@ Pass a `ttl` when caching to control how long an entry stays fresh. It is record
 
 ```ts
 import { Duration, Effect } from "effect";
-import { PackageSpec } from "type-registry-effect";
+import { PackageSpec, TypeRegistry } from "type-registry-effect";
 
 const program = Effect.gen(function* () {
   const registry = yield* TypeRegistry;

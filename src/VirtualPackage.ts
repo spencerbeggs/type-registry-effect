@@ -95,6 +95,11 @@ export class VirtualPackage extends Schema.Class<VirtualPackage>("VirtualPackage
 		const prefix = `node_modules/${this.name}`;
 		vfs.set(`${prefix}/package.json`, this.toPackageJson());
 		for (const [fileName, content] of this.entries) {
+			// Same wiring-defect posture as the empty-entries check: an entry
+			// named package.json would silently replace the generated manifest.
+			if (fileName === "package.json") {
+				throw new Error(`VirtualPackage: "${this.name}" cannot define package.json as an entry`);
+			}
 			vfs.set(`${prefix}/${fileName}`, content);
 		}
 		return vfs;

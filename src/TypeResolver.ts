@@ -177,6 +177,10 @@ export class TypeResolver {
 
 		const seen = new Set<string>();
 		return entries.filter((entry) => {
+			// Export conditions fall back to `import`/`default`, which can name
+			// JS files or `package.json`; an API that enumerates type
+			// definitions must not return those.
+			if (!entry.isTypeDefinition) return false;
 			if (seen.has(entry.filePath)) return false;
 			seen.add(entry.filePath);
 			return true;

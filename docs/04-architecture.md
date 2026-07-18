@@ -4,7 +4,7 @@ How the services fit together, why this package builds no platform layers of its
 
 ## The service graph
 
-Four services, one of which is the facade you normally hold.
+Three services in the graph, one of which is the facade you normally hold. A fourth, the optional `RegistryObserver`, sits alongside it — any service may emit events to it when a host provides one (see [observability](03-observability.md)).
 
 ```text
 TypeRegistry                    the facade you call

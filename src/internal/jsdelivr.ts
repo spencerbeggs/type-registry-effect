@@ -7,8 +7,14 @@ export const DATA_API = "https://data.jsdelivr.com/v1";
 /** Base URL for the jsDelivr file-serving CDN. */
 export const CDN = "https://cdn.jsdelivr.net";
 
-/** Matches TypeScript declaration file names (`.d.ts`, `.d.mts`, `.d.cts`, …). */
-export const TYPE_FILE_PATTERN = /\.d\.([^.]+\.)?[cm]?ts$/i;
+/**
+ * Matches TypeScript declaration file names: the standard `.d.ts`, `.d.mts`
+ * and `.d.cts` suffixes, plus the arbitrary-extension form `.d.<ext>.ts`
+ * (TS 5 `allowArbitraryExtensions`, e.g. `styles.d.css.ts`). The middle
+ * segment is only valid before a plain `.ts` — `.d.<ext>.mts`/`.cts` are not
+ * declaration forms and do not match.
+ */
+export const TYPE_FILE_PATTERN = /(\.d\.[cm]?ts|\.d\.[^.]+\.ts)$/i;
 
 /** The package metadata endpoint: versions and dist-tags. */
 export const versionsUrl = (name: string): string => `${DATA_API}/package/npm/${name}`;
@@ -16,9 +22,13 @@ export const versionsUrl = (name: string): string => `${DATA_API}/package/npm/${
 /** The flat file-tree endpoint for a pinned package version. */
 export const fileTreeUrl = (pkg: PackageSpec): string => `${DATA_API}/package/npm/${pkg.name}@${pkg.version}/flat`;
 
-/** The CDN URL for one file of a pinned package version. */
+/**
+ * The CDN URL for one file of a pinned package version. Each path segment is
+ * percent-encoded so a file name containing `?`, `#` or `%` cannot rewrite
+ * the URL's query, fragment or escaping.
+ */
 export const fileUrl = (pkg: PackageSpec, filePath: string): string =>
-	`${CDN}/npm/${pkg.name}@${pkg.version}/${filePath.replace(/^\/+/, "")}`;
+	`${CDN}/npm/${pkg.name}@${pkg.version}/${filePath.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}`;
 
 /** The CDN URL for a pinned package version's `package.json`. */
 export const packageJsonUrl = (pkg: PackageSpec): string => fileUrl(pkg, "package.json");

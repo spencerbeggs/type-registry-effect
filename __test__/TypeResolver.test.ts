@@ -120,6 +120,37 @@ describe("TypeResolver", () => {
 			assert.isTrue(Option.isSome(substituted));
 			if (Option.isSome(substituted)) assert.strictEqual(substituted.value.filePath, "dist/deep.d.ts");
 		});
+
+		it("resolves the root-conditions sugar form (exports object with no '.' key)", () => {
+			const pkg = PackageSpec.make({ name: "pkg", version: "1.0.0" });
+			const sugar = manifest({
+				exports: { types: "./index.d.ts", import: "./index.mjs", default: "./index.js" },
+			});
+			const root = TypeResolver.resolveImport("pkg", sugar, pkg);
+			assert.isTrue(Option.isSome(root));
+			if (Option.isSome(root)) assert.strictEqual(root.value.filePath, "index.d.ts");
+			// The sugar form defines only the root target: a subpath must not
+			// accidentally match one of its condition keys.
+			assert.isTrue(Option.isNone(TypeResolver.resolveImport("pkg/types", sugar, pkg)));
+		});
+
+		it("resolves wildcards by Node specificity, not insertion order", () => {
+			const pkg = PackageSpec.make({ name: "pkg", version: "1.0.0" });
+			const shadowed = manifest({
+				exports: {
+					"./*": { types: "./dist/*.d.ts" },
+					"./feature/*": { types: "./types/feature/*.d.ts" },
+				},
+			});
+			// "./feature/*" has the longer literal prefix and must win even
+			// though "./*" appears first.
+			const specific = TypeResolver.resolveImport("pkg/feature/deep", shadowed, pkg);
+			assert.isTrue(Option.isSome(specific));
+			if (Option.isSome(specific)) assert.strictEqual(specific.value.filePath, "types/feature/deep.d.ts");
+			const broad = TypeResolver.resolveImport("pkg/other", shadowed, pkg);
+			assert.isTrue(Option.isSome(broad));
+			if (Option.isSome(broad)) assert.strictEqual(broad.value.filePath, "dist/other.d.ts");
+		});
 	});
 
 	describe("hostile input", () => {
@@ -238,10 +269,31 @@ describe("TypeResolver", () => {
 	describe("resolveTypeEntries", () => {
 		it("enumerates main and exports entries, deduplicated", () => {
 			const entries = TypeResolver.resolveTypeEntries(zodManifest, zod);
+			// zod exports "./package.json", but an API that enumerates type
+			// definitions must not surface it.
 			assert.deepStrictEqual(
 				entries.map((entry) => entry.filePath),
-				["index.d.ts", "package.json"],
+				["index.d.ts"],
 			);
+		});
+
+		it("filters non-declaration export targets (package.json, JS-only conditions)", () => {
+			const pkg = PackageSpec.make({ name: "pkg", version: "1.0.0" });
+			const mixed = manifest({
+				types: "./index.d.ts",
+				exports: {
+					".": { types: "./index.d.ts" },
+					"./package.json": "./package.json",
+					"./js-only": { default: "./lib/js-only.js" },
+				},
+			});
+			assert.deepStrictEqual(
+				TypeResolver.resolveTypeEntries(mixed, pkg).map((entry) => entry.filePath),
+				["index.d.ts"],
+			);
+			for (const entry of TypeResolver.resolveTypeEntries(mixed, pkg)) {
+				assert.isTrue(entry.isTypeDefinition);
+			}
 		});
 
 		it("skips wildcard export keys — enumeration has no capture to substitute", () => {

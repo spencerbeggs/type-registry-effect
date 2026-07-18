@@ -43,6 +43,19 @@ describe("VirtualPackage", () => {
 		// A package with no entries would ship a types field pointing at a
 		// file that does not exist — developer wiring, so it throws.
 		assert.throws(() => VirtualPackage.createMultiEntry("hollow", "1.0.0", new Map()), /at least one entry file/);
+		// An entry named package.json would silently replace the generated manifest.
+		assert.throws(
+			() =>
+				VirtualPackage.createMultiEntry(
+					"clobber",
+					"1.0.0",
+					new Map([
+						["index.d.ts", "export {};"],
+						["package.json", "{}"],
+					]),
+				).toVfs(),
+			/cannot define package\.json as an entry/,
+		);
 		// Direct construction paths hit the backstop at Vfs generation.
 		assert.throws(
 			() => VirtualPackage.make({ name: "hollow", version: "1.0.0", entries: new Map() }).toVfs(),

@@ -24,7 +24,7 @@ pnpm add type-registry-effect effect @effect/platform-node @effected/semver @eff
 Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed only for `TsEnvironment`:
 
 ```bash
-npm install --save-optional typescript @typescript/vfs
+pnpm add typescript @typescript/vfs
 ```
 
 ## Quick start

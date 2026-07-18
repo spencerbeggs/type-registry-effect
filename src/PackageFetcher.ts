@@ -174,6 +174,13 @@ export interface PackageFetcherShape {
 
 const retrySchedule = Schedule.exponential(Duration.millis(100));
 
+/**
+ * Deadline for materializing a response body. `Effect.timeout` on the request
+ * ends once headers arrive; without a second deadline a stalled body stream
+ * would hang a fiber indefinitely.
+ */
+const bodyTimeout = Duration.seconds(30);
+
 /** Retry only failures that can be transient: transport errors and timeouts. */
 const isTransient = (error: unknown): boolean =>
 	Cause.isTimeoutError(error) || (HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError");
@@ -195,6 +202,7 @@ const make: Effect.Effect<PackageFetcherShape, never, HttpClient.HttpClient> = E
 				response.status >= 200 && response.status < 300
 					? Effect.succeed(response)
 					: response.text.pipe(
+							Effect.timeout(bodyTimeout),
 							// The status IS the failure (kind stays "status"); the body is
 							// diagnostic. When even reading it fails, carry that read
 							// failure as the cause instead of pretending the body was empty.
@@ -217,7 +225,10 @@ const make: Effect.Effect<PackageFetcherShape, never, HttpClient.HttpClient> = E
 	const fetchText = (url: string): Effect.Effect<string, FetchError> =>
 		fetchOk(url).pipe(
 			Effect.flatMap((response) =>
-				Effect.mapError(response.text, (cause) => new FetchError({ url, kind: "body", cause })),
+				response.text.pipe(
+					Effect.timeout(bodyTimeout),
+					Effect.mapError((cause) => new FetchError({ url, kind: "body", cause })),
+				),
 			),
 		);
 
@@ -227,7 +238,10 @@ const make: Effect.Effect<PackageFetcherShape, never, HttpClient.HttpClient> = E
 	): Effect.Effect<S["Type"], FetchError> =>
 		fetchOk(url).pipe(
 			Effect.flatMap((response) =>
-				Effect.mapError(response.json, (cause) => new FetchError({ url, kind: "body", cause })),
+				response.json.pipe(
+					Effect.timeout(bodyTimeout),
+					Effect.mapError((cause) => new FetchError({ url, kind: "body", cause })),
+				),
 			),
 			Effect.flatMap((data) =>
 				Schema.decodeUnknownEffect(schema)(data).pipe(

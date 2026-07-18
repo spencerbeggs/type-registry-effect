@@ -83,9 +83,10 @@ export const substituteWildcard = (value: unknown, captured: string, depth = 0):
 };
 
 /**
- * Look up a subpath in an `exports` map: exact key first (with and without
- * the `./` prefix), then bounded wildcard patterns. Returns the export value
- * (wildcards substituted) or `null`.
+ * Look up a subpath in an `exports` map: the root-conditions sugar form
+ * first, then exact keys (with and without the `./` prefix), then bounded
+ * wildcard patterns resolved by Node's specificity rules. Returns the export
+ * value (wildcards substituted) or `null`.
  */
 export const getExportValue = (exports: unknown, subpath: string): unknown => {
 	if (exports === undefined || exports === null) return null;
@@ -94,21 +95,36 @@ export const getExportValue = (exports: unknown, subpath: string): unknown => {
 	if (Array.isArray(exports)) return subpath === "." ? exports : null;
 	if (typeof exports !== "object") return null;
 	const exportsObj = exports as Record<string, unknown>;
+	const keys = Object.keys(exportsObj);
+	// Sugar form: an exports object with no `.`-prefixed key is a conditions
+	// object for the root target itself, not a subpath map.
+	if (!keys.some((key) => key.startsWith("."))) {
+		return subpath === "." ? exportsObj : null;
+	}
 	const withoutDot = subpath.replace(/^\.\//, "");
 	for (const key of [subpath, withoutDot]) {
 		if (!DUNDER_KEYS.has(key) && Object.hasOwn(exportsObj, key)) {
 			return exportsObj[key];
 		}
 	}
-	for (const pattern of Object.keys(exportsObj)) {
+	// Wildcard patterns follow Node's PATTERN_KEY_COMPARE, not insertion
+	// order: the longest literal prefix before `*` wins, then the longer
+	// pattern overall — so `./feature/*` beats `./*` wherever both match.
+	let best: { readonly pattern: string; readonly captured: string; readonly base: number } | null = null;
+	for (const pattern of keys) {
 		if (DUNDER_KEYS.has(pattern) || !pattern.includes("*")) continue;
 		if (!Object.hasOwn(exportsObj, pattern)) continue;
 		const regex = compileWildcard(pattern);
 		if (regex === null) continue;
 		const match = regex.exec(subpath) ?? regex.exec(withoutDot);
-		if (match !== null) {
-			return substituteWildcard(exportsObj[pattern], match[1] ?? "");
+		if (match === null) continue;
+		const base = pattern.indexOf("*");
+		if (best === null || base > best.base || (base === best.base && pattern.length > best.pattern.length)) {
+			best = { pattern, captured: match[1] ?? "", base };
 		}
+	}
+	if (best !== null) {
+		return substituteWildcard(exportsObj[best.pattern], best.captured);
 	}
 	return null;
 };
