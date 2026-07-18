@@ -1,655 +1,434 @@
-// TypeRegistry namespace module — composable Effect programs for managing
-// type definitions fetched from the jsDelivr CDN and stored in a local disk cache.
-//
-// Every export in this module is a pure, composable Effect program
-// (https://effect.website). Programs require one or more service layers
-// (CacheService, PackageFetcher, TypeResolver) that are provided at the edge
-// of your application via `Effect.provide`. For the standard Node.js
-// implementation, use `NodeLayer` from `"type-registry-effect/node"`.
-
-import { Effect, Metric, Option } from "effect";
-import type { CacheError } from "./errors/CacheError.js";
-import type { NetworkError } from "./errors/NetworkError.js";
-import { PackageNotFoundError } from "./errors/PackageNotFoundError.js";
-import { ParseError } from "./errors/ParseError.js";
-import type { ResolutionError } from "./errors/ResolutionError.js";
+import { Range, SemVer } from "@effected/semver";
+import type { Duration } from "effect";
+import { Context, DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
+import { packageJsonUrl } from "./internal/jsdelivr.js";
 import {
-	batchDuration,
-	cacheHits,
-	cacheMisses,
-	cacheStale,
-	packageLoadDuration,
-	packagesFailed,
-	packagesLoaded,
-} from "./metrics.js";
-import type { CacheMetadata } from "./schemas/CacheMetadata.js";
-import type { PackageJson } from "./schemas/PackageJson.js";
-import type { PackageSpec } from "./schemas/PackageSpec.js";
-import type { ResolvedModule } from "./schemas/ResolvedModule.js";
-import type { CachePruneResult, VirtualFileSystem } from "./services/CacheService.js";
-import { CacheService } from "./services/CacheService.js";
-import { PackageFetcher } from "./services/PackageFetcher.js";
-import { RegistryEvent, emitEvent } from "./services/TypeRegistryObserver.js";
-import { TypeResolver } from "./services/TypeResolver.js";
+	FetchError,
+	PackageFetcher,
+	PackageManifest,
+	PackageNotFoundError,
+	VersionNotFoundError,
+} from "./PackageFetcher.js";
+import type { PackageSpec } from "./PackageSpec.js";
+import type { RegistryEvent } from "./RegistryEvent.js";
+import { emit } from "./RegistryEvent.js";
+import type { CachePruneResult, TypeCacheError } from "./TypeCache.js";
+import { TypeCache, TypeCacheMetadata } from "./TypeCache.js";
+import type { ResolvedModule } from "./TypeResolver.js";
+import { TypeResolver } from "./TypeResolver.js";
+import type { Vfs } from "./Vfs.js";
+import { mergeVfs } from "./Vfs.js";
 
 /**
- * Classify a per-package load failure into a stable {@link RegistryEvent}
- * `PackageLoadFailed` kind, so consumers can react without parsing error
- * strings. Network/CDN failures carry an HTTP status in their message (see the
- * fetch helpers), which lets us distinguish a rejected version range from a
- * genuinely missing package.
+ * Raised by {@link TypeRegistryShape.getVfs} when **every** requested package
+ * fails.
+ *
+ * @remarks
+ * Carries the per-package failures structurally. v3 abused
+ * `PackageNotFoundError` for this case, with a comma-joined `name` and an
+ * empty `version`.
+ *
+ * @public
  */
-const classifyLoadError = (
-	error: unknown,
-): "not-found" | "version-range" | "schema" | "json" | "network" | "unknown" => {
-	const tag =
-		typeof error === "object" && error !== null && "_tag" in error ? (error as { _tag: unknown })._tag : undefined;
-	const raw =
-		typeof error === "object" && error !== null && "message" in error
-			? String((error as { message: unknown }).message)
-			: String(error);
-	const m = raw.toLowerCase();
-	// These literals come from jsDelivr's plain-text error body (captured into
-	// NetworkError.message by `fetchOk`), e.g. "Couldn't find the requested
-	// version range" / "... is not a version". They are matched by substring
-	// because the CDN sends no structured error code; a phrasing change on
-	// jsDelivr's side would downgrade this to "network" (an acceptable fallback).
-	if (m.includes("version range") || m.includes("not a version")) return "version-range";
-	switch (tag) {
+export class BatchLoadError extends Schema.TaggedErrorClass<BatchLoadError>()("BatchLoadError", {
+	/** One entry per failed package, with its typed error preserved. */
+	failures: Schema.Array(
+		Schema.Struct({
+			name: Schema.String,
+			version: Schema.String,
+			error: Schema.Defect(),
+		}),
+	),
+}) {
+	override get message(): string {
+		return `Failed to load type definitions for all ${this.failures.length} requested package(s)`;
+	}
+}
+
+/**
+ * Options for {@link TypeRegistryShape.getPackageVfs} and
+ * {@link TypeRegistryShape.getVfs}.
+ *
+ * @public
+ */
+export interface PackageVfsOptions {
+	/**
+	 * Fetch from the CDN when the package is missing or stale. Defaults to
+	 * `true`. With `false`, a stale entry is served from disk and a miss fails
+	 * with `PackageNotFoundError`.
+	 */
+	readonly autoFetch?: boolean;
+	/** Time-to-live recorded for newly cached entries; absent = never expires. */
+	readonly ttl?: Duration.Duration;
+}
+
+/**
+ * The service shape {@link TypeRegistry} provides.
+ *
+ * @public
+ */
+export interface TypeRegistryShape {
+	/** Report whether the package's files are already on disk. */
+	readonly hasCached: (pkg: PackageSpec) => Effect.Effect<boolean, TypeCacheError>;
+	/** Fetch a pinned package's manifest and declaration files and cache them. */
+	readonly fetchAndCache: (
+		pkg: PackageSpec,
+		options?: { readonly ttl?: Duration.Duration },
+	) => Effect.Effect<void, FetchError | PackageNotFoundError | TypeCacheError>;
+	/**
+	 * Build the {@link Vfs} for one package, fetching it first when missing or
+	 * stale (the stale-vs-miss ladder: live metadata → hit; files on disk with
+	 * no live metadata → stale, refetched when `autoFetch`, served as-is
+	 * otherwise; nothing → miss, fetched or failed typed on
+	 * `autoFetch: false`).
+	 */
+	readonly getPackageVfs: (
+		pkg: PackageSpec,
+		options?: PackageVfsOptions,
+	) => Effect.Effect<Vfs, FetchError | PackageNotFoundError | TypeCacheError>;
+	/**
+	 * Build a merged {@link Vfs} for several packages, best-effort.
+	 *
+	 * @remarks
+	 * Loads concurrently (limit 5), accumulates per-package failures, merges
+	 * the partial results, and fails — with a structured
+	 * {@link BatchLoadError} — only when every package fails. An empty
+	 * `packages` array is not an error: it yields an empty `Vfs`.
+	 */
+	readonly getVfs: (
+		packages: ReadonlyArray<PackageSpec>,
+		options?: PackageVfsOptions,
+	) => Effect.Effect<Vfs, BatchLoadError>;
+	/**
+	 * Resolve an import specifier against a cached package's manifest.
+	 * `Option.none()` when the manifest offers no evidence for the subpath.
+	 */
+	readonly resolveImport: (
+		pkg: PackageSpec,
+		specifier: string,
+	) => Effect.Effect<Option.Option<ResolvedModule>, TypeCacheError | FetchError>;
+	/** Enumerate a cached package's type entry points. */
+	readonly getTypeEntries: (
+		pkg: PackageSpec,
+	) => Effect.Effect<ReadonlyArray<ResolvedModule>, TypeCacheError | FetchError>;
+	/**
+	 * Resolve a version reference — dist-tag, exact version or semver range —
+	 * to a pinned version string, locally.
+	 *
+	 * @remarks
+	 * Dist-tags resolve through the CDN's tag map; exact versions match the
+	 * published list; ranges resolve with `@effected/semver`
+	 * (max-satisfying). No CDN `/resolve` endpoint, no error-prose parsing —
+	 * an unmatched ref fails as a typed {@link VersionNotFoundError}.
+	 */
+	readonly resolveVersion: (name: string, ref: string) => Effect.Effect<string, FetchError | VersionNotFoundError>;
+	/** Remove one package from the cache (metadata first, then files). */
+	readonly clearCache: (pkg: PackageSpec) => Effect.Effect<void, TypeCacheError>;
+	/** Evict every expired package from the cache. */
+	readonly pruneCache: Effect.Effect<CachePruneResult, TypeCacheError>;
+}
+
+/**
+ * Classify a per-package load failure into a stable `PackageLoadFailed`
+ * event kind — from typed error tags and structured fields, never from
+ * message substrings (v3's `classifyLoadError` did substring matching over
+ * stringified errors; it is dead).
+ */
+const classify = (error: unknown): (RegistryEvent & { readonly _tag: "PackageLoadFailed" })["kind"] => {
+	if (typeof error !== "object" || error === null || !("_tag" in error)) return "unknown";
+	switch (error._tag) {
 		case "PackageNotFoundError":
 			return "not-found";
-		case "ParseError":
-			if (m.includes("json parse")) return "json";
-			if (m.includes("schema validation")) return "schema";
-			return "unknown";
-		case "NetworkError":
-			if (m.includes("404") || m.includes("not found") || m.includes("couldn't find")) return "not-found";
+		case "VersionNotFoundError":
+			return "version-range";
+		case "TypeCacheError":
+			return "cache";
+		case "FetchError": {
+			const fetchError = error as FetchError;
+			if (fetchError.status === 404) return "not-found";
+			if (fetchError.kind === "schema") return "schema";
 			return "network";
+		}
 		default:
 			return "unknown";
 	}
 };
 
-/**
- * Check whether a package already exists in the disk cache.
- *
- * @remarks
- * This performs a lightweight existence check against {@link CacheService} without
- * reading any file contents. Use it to decide whether to fetch before calling
- * {@link fetchAndCache}.
- *
- * @param pkg - The package specification to look up.
- * @returns An Effect that succeeds with `true` when the package is cached, `false` otherwise.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
- *   const exists = yield* TypeRegistry.hasCached(pkg);
- *   console.log(`zod@3.23.8 cached: ${exists}`);
- *   return exists;
- * });
- *
- * const result = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @public
- */
-export const hasCached = (pkg: PackageSpec): Effect.Effect<boolean, CacheError, CacheService> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
+const make: Effect.Effect<TypeRegistryShape, never, TypeCache | PackageFetcher> = Effect.gen(function* () {
+	const cache = yield* TypeCache;
+	const fetcher = yield* PackageFetcher;
+
+	// Serializes cache mutations (fetchAndCache, clearCache, pruneCache) so an
+	// interleaving like "clearCache lands between a fetch's file writes and
+	// its metadata write" cannot strand live metadata with no files. This
+	// guards fibers within THIS runtime only — cross-process races on a shared
+	// cache directory are out of scope (the both-planes check below is the
+	// backstop for anything external).
+	const mutations = yield* Semaphore.make(1);
+
+	const fetchAndCacheImpl = (
+		pkg: PackageSpec,
+		options?: { readonly ttl?: Duration.Duration },
+	): Effect.Effect<void, FetchError | PackageNotFoundError | TypeCacheError> =>
+		mutations.withPermits(1)(
+			Effect.gen(function* () {
+				yield* emit({ _tag: "FetchStart", package: pkg.name, version: pkg.version });
+				const manifest = yield* fetcher.getPackageJson(pkg);
+				const typeFiles = yield* fetcher.getTypeFiles(pkg);
+				yield* cache.write(pkg, "package.json", JSON.stringify(manifest, null, 2));
+				for (const [filePath, content] of typeFiles) {
+					const normalized = filePath.replace(/^\/+/, "");
+					if (normalized !== "package.json") {
+						yield* cache.write(pkg, normalized, content);
+					}
+				}
+				const now = yield* DateTime.now;
+				yield* cache.writeMetadata(
+					pkg,
+					TypeCacheMetadata.make({
+						version: pkg.version,
+						cachedAt: now,
+						...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
+					}),
+				);
+			}),
+		);
+
+	const getPackageVfsImpl = (
+		pkg: PackageSpec,
+		options?: PackageVfsOptions,
+	): Effect.Effect<Vfs, FetchError | PackageNotFoundError | TypeCacheError> =>
+		Effect.gen(function* () {
+			const autoFetch = options?.autoFetch ?? true;
+			const [duration, result] = yield* Effect.timed(
+				Effect.gen(function* () {
+					// Metadata lives in the store; `readMetadata` returns `None` when the
+					// entry is absent or its TTL has expired (expiry evicts on read).
+					// Disk presence then distinguishes stale (files present, metadata
+					// gone) from an outright miss. A hit requires BOTH planes: live
+					// metadata whose files are gone (an external deletion — in-process
+					// interleavings are serialized by the mutation semaphore) is a
+					// miss, or getVfs would fail on the empty plane.
+					const metadata = yield* cache.readMetadata(pkg);
+					const diskExists = yield* cache.exists(pkg);
+					let source: "cache" | "network" = "cache";
+
+					if (Option.isSome(metadata) && diskExists) {
+						const now = yield* DateTime.now;
+						yield* emit({
+							_tag: "CacheHit",
+							package: pkg.name,
+							version: pkg.version,
+							age: DateTime.distance(metadata.value.cachedAt, now),
+						});
+					} else if (Option.isNone(metadata) && diskExists) {
+						yield* emit({ _tag: "CacheStale", package: pkg.name, version: pkg.version });
+						if (autoFetch) {
+							yield* fetchAndCacheImpl(pkg, options);
+							source = "network";
+						}
+						// autoFetch: false serves the on-disk files without refetching.
+					} else if (autoFetch) {
+						yield* emit({ _tag: "CacheMiss", package: pkg.name, version: pkg.version });
+						yield* fetchAndCacheImpl(pkg, options);
+						source = "network";
+					} else {
+						return yield* Effect.fail(new PackageNotFoundError({ name: pkg.name, version: pkg.version }));
+					}
+
+					const vfs = yield* cache.getVfs(pkg);
+					return { vfs, source };
+				}),
+			);
+			yield* emit({
+				_tag: "PackageLoaded",
+				package: pkg.name,
+				version: pkg.version,
+				files: result.vfs.size,
+				source: result.source,
+				duration,
+			});
+			return result.vfs;
+		});
+
+	const readManifest = (pkg: PackageSpec): Effect.Effect<PackageManifest, TypeCacheError | FetchError> =>
+		Effect.gen(function* () {
+			const content = yield* cache.read(pkg, "package.json");
+			const parsed = yield* Effect.try({
+				try: () => JSON.parse(content) as unknown,
+				catch: (cause) => new FetchError({ url: packageJsonUrl(pkg), kind: "schema", cause }),
+			});
+			return yield* Schema.decodeUnknownEffect(PackageManifest)(parsed).pipe(
+				Effect.mapError((cause) => new FetchError({ url: packageJsonUrl(pkg), kind: "schema", cause })),
+			);
+		});
+
+	const hasCached = Effect.fn("TypeRegistry.hasCached")(function* (pkg: PackageSpec) {
 		return yield* cache.exists(pkg);
 	});
 
-/**
- * Fetch type definitions for a package from the jsDelivr CDN and write them
- * to the disk cache.
- *
- * @remarks
- * The function downloads the `package.json` and every `.d.ts` file published
- * by the package, then persists them under the {@link CacheService} storage
- * directory. A {@link CacheMetadata} record is written alongside the files so
- * that future cache hits can evaluate freshness.
- *
- * The optional `ttl` (time-to-live) is stored in the metadata and expressed
- * in **milliseconds**. When a subsequent read finds that the cache entry is
- * older than `ttl`, the entry is considered stale and a re-fetch is triggered
- * by higher-level operations such as {@link getPackageVFS}.
- *
- * @param pkg - The package specification to fetch.
- * @param options - Optional configuration. When provided, `options.ttl` sets
- *   the time-to-live in milliseconds for the cached entry.
- * @returns An Effect that succeeds with `void` once all files are written.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "lodash", version: "4.17.21" });
- *   // Cache with a 1-hour TTL
- *   yield* TypeRegistry.fetchAndCache(pkg, { ttl: 60 * 60 * 1000 });
- * });
- *
- * await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link hasCached} to check before fetching
- * @see {@link getPackageVFS} for a higher-level API that auto-fetches
- *
- * @public
- */
-export const fetchAndCache = (
-	pkg: PackageSpec,
-	options?: { readonly ttl?: number },
-): Effect.Effect<void, NetworkError | ParseError | CacheError, CacheService | PackageFetcher> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
-		const fetcher = yield* PackageFetcher;
-
-		yield* emitEvent(RegistryEvent.FetchStart({ package: pkg.name, version: pkg.version }));
-
-		// Fetch package.json
-		const packageJson: PackageJson = yield* fetcher.getPackageJson(pkg);
-
-		// Fetch all type files
-		const typeFiles: Map<string, string> = yield* fetcher.getTypeFiles(pkg);
-
-		// Write package.json to cache
-		yield* cache.write(pkg, "package.json", JSON.stringify(packageJson, null, 2));
-
-		// Write all type files to cache
-		for (const [filePath, content] of typeFiles) {
-			const normalizedPath = filePath.replace(/^\//, "");
-			if (normalizedPath !== "package.json") {
-				yield* cache.write(pkg, normalizedPath, content);
-			}
-		}
-
-		// Write metadata
-		const metadata: CacheMetadata = {
-			cachedAt: Date.now(),
-			version: pkg.version,
-			...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
-		};
-		yield* cache.writeMetadata(pkg, metadata);
+	const fetchAndCache = Effect.fn("TypeRegistry.fetchAndCache")(function* (
+		pkg: PackageSpec,
+		options?: { readonly ttl?: Duration.Duration },
+	) {
+		return yield* fetchAndCacheImpl(pkg, options);
 	});
 
-/**
- * Get a {@link VirtualFileSystem} for a single package, optionally fetching
- * it from the CDN first if it is not already cached.
- *
- * @remarks
- * When `autoFetch` is `true` (the default) and the package is not present in
- * the cache, this function transparently calls {@link fetchAndCache} before
- * building the VFS. Set `autoFetch` to `false` to restrict the operation to
- * cached data only; a {@link PackageNotFoundError} is raised if the package
- * is missing.
- *
- * The returned VFS maps file paths (relative to `node_modules/<package>`) to
- * their string contents.
- *
- * @param pkg - The package specification to retrieve.
- * @param options - Optional configuration. When provided, `options.autoFetch`
- *   controls whether to fetch from the CDN on a cache miss (default `true`),
- *   and `options.ttl` sets the time-to-live in milliseconds forwarded to
- *   {@link fetchAndCache}.
- * @returns An Effect that succeeds with the package's {@link VirtualFileSystem}.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import type { VirtualFileSystem } from "type-registry-effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
- *   // Auto-fetches if not cached
- *   const vfs: VirtualFileSystem = yield* TypeRegistry.getPackageVFS(pkg);
- *   console.log(`Files: ${[...vfs.keys()].join(", ")}`);
- *   return vfs;
- * });
- *
- * const vfs = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link getVFS} to load multiple packages at once
- * @see {@link fetchAndCache} for the underlying fetch + write logic
- *
- * @public
- */
-export const getPackageVFS = (
-	pkg: PackageSpec,
-	options?: { readonly autoFetch?: boolean; readonly ttl?: number },
-): Effect.Effect<
-	VirtualFileSystem,
-	NetworkError | ParseError | CacheError | PackageNotFoundError,
-	CacheService | PackageFetcher
-> => {
-	const inner = Effect.gen(function* () {
-		const cache = yield* CacheService;
-		const autoFetch = options?.autoFetch ?? true;
-		const startTime = Date.now();
-		// Metadata lives in the SQLite store; `readMetadata` returns `None` when the
-		// entry is absent or its TTL has expired (expiry evicts on read). Disk
-		// presence then distinguishes a stale cache (files present, metadata gone)
-		// from an outright miss.
-		const metaOpt = yield* cache.readMetadata(pkg);
-		const diskExists = yield* cache.exists(pkg);
-		let source: "cache" | "network" = "cache";
-
-		if (Option.isSome(metaOpt)) {
-			// Live metadata entry — cache hit.
-			yield* emitEvent(
-				RegistryEvent.CacheHit({
-					package: pkg.name,
-					version: pkg.version,
-					ageMinutes: Math.round((Date.now() - metaOpt.value.cachedAt) / 60000),
-				}),
-			);
-			yield* Metric.increment(cacheHits);
-		} else if (diskExists) {
-			// Files on disk but no live metadata (expired/evicted) — stale.
-			if (autoFetch) {
-				yield* emitEvent(
-					RegistryEvent.CacheStale({ package: pkg.name, version: pkg.version, ageMinutes: 0, ttlMinutes: 0 }),
-				);
-				yield* Metric.increment(cacheStale);
-				yield* fetchAndCache(pkg, options);
-				source = "network";
-			} else {
-				// Serve the on-disk files without refetching.
-				yield* emitEvent(RegistryEvent.CacheHit({ package: pkg.name, version: pkg.version, ageMinutes: 0 }));
-				yield* Metric.increment(cacheHits);
-			}
-		} else {
-			// Nothing cached — miss.
-			if (autoFetch) {
-				yield* emitEvent(RegistryEvent.CacheMiss({ package: pkg.name, version: pkg.version }));
-				yield* Metric.increment(cacheMisses);
-				yield* fetchAndCache(pkg, options);
-				source = "network";
-			} else {
-				yield* Effect.fail(
-					new PackageNotFoundError({
-						name: pkg.name,
-						version: pkg.version,
-						message: `Package ${pkg.toString()} is not cached and autoFetch is disabled`,
-					}),
-				);
-			}
-		}
-
-		const vfs = yield* cache.getVFS(pkg);
-		const durationMs = Date.now() - startTime;
-		yield* emitEvent(
-			RegistryEvent.PackageLoaded({
-				package: pkg.name,
-				version: pkg.version,
-				files: vfs.size,
-				source,
-				durationMs,
-			}),
-		);
-		yield* Metric.increment(packagesLoaded);
-		return vfs;
+	const getPackageVfs = Effect.fn("TypeRegistry.getPackageVfs")(function* (
+		pkg: PackageSpec,
+		options?: PackageVfsOptions,
+	) {
+		return yield* getPackageVfsImpl(pkg, options);
 	});
-	return inner.pipe(Metric.trackDuration(packageLoadDuration));
-};
 
-/**
- * Get a combined {@link VirtualFileSystem} for multiple packages with
- * graceful degradation on per-package failures.
- *
- * @remarks
- * Packages are fetched concurrently with a concurrency limit of **5**.
- * Individual package failures are caught and accumulated rather than
- * aborting the entire batch. The operation only fails with a
- * {@link PackageNotFoundError} when **every** requested package fails.
- * When at least one package succeeds, the merged VFS is returned and
- * failing packages are silently skipped.
- *
- * This partial-failure strategy makes the function suitable for
- * best-effort scenarios such as editor integrations where missing type
- * definitions for one dependency should not block the rest.
- *
- * @param packages - Array of package specifications to load.
- * @param options - Optional configuration forwarded to {@link getPackageVFS}.
- *   When provided, `options.autoFetch` controls whether to fetch missing
- *   packages from the CDN (default `true`), and `options.ttl` sets the
- *   time-to-live in milliseconds for newly cached entries.
- * @returns An Effect that succeeds with the merged {@link VirtualFileSystem}.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import type { VirtualFileSystem } from "type-registry-effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const packages = [
- *     new PackageSpec({ name: "zod", version: "3.23.8" }),
- *     new PackageSpec({ name: "effect", version: "3.12.5" }),
- *   ];
- *   const vfs: VirtualFileSystem = yield* TypeRegistry.getVFS(packages);
- *   console.log(`Total VFS entries: ${vfs.size}`);
- *   return vfs;
- * });
- *
- * const vfs = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link getPackageVFS} for loading a single package
- *
- * @public
- */
-export const getVFS = (
-	packages: ReadonlyArray<PackageSpec>,
-	options?: { readonly autoFetch?: boolean; readonly ttl?: number },
-): Effect.Effect<VirtualFileSystem, PackageNotFoundError, CacheService | PackageFetcher> => {
-	const inner = Effect.gen(function* () {
-		const startTime = Date.now();
-
-		yield* emitEvent(RegistryEvent.BatchStart({ total: packages.length, packages: packages.map((p) => p.toString()) }));
-
-		const results = yield* Effect.forEach(
-			packages,
-			(pkg) =>
-				getPackageVFS(pkg, options).pipe(
-					Effect.map((vfs) => ({ _tag: "ok" as const, vfs, pkg })),
-					Effect.catchAll((error) =>
-						Effect.gen(function* () {
-							yield* emitEvent(
-								RegistryEvent.PackageLoadFailed({
-									package: pkg.name,
-									version: pkg.version,
-									kind: classifyLoadError(error),
-									message: String(error),
-								}),
-							);
-							yield* Metric.increment(packagesFailed);
-							return { _tag: "err" as const, pkg, error };
-						}),
+	const getVfs = Effect.fn("TypeRegistry.getVfs")(function* (
+		packages: ReadonlyArray<PackageSpec>,
+		options?: PackageVfsOptions,
+	) {
+		yield* emit({ _tag: "BatchStart", total: packages.length, packages: packages.map((pkg) => pkg.toString()) });
+		const [duration, results] = yield* Effect.timed(
+			Effect.forEach(
+				packages,
+				(pkg) =>
+					getPackageVfsImpl(pkg, options).pipe(
+						Effect.map((vfs) => ({ ok: true as const, pkg, vfs })),
+						Effect.catch((error) =>
+							emit({
+								_tag: "PackageLoadFailed",
+								package: pkg.name,
+								version: pkg.version,
+								kind: classify(error),
+								error,
+							}).pipe(Effect.as({ ok: false as const, pkg, error })),
+						),
 					),
-				),
-			{ concurrency: 5 },
+				{ concurrency: 5 },
+			),
 		);
 
-		const merged: VirtualFileSystem = new Map();
-		const errors: Array<{ pkg: PackageSpec; error: unknown }> = [];
-		let totalFiles = 0;
+		const succeeded = results.filter((result) => result.ok);
+		const failed = results.filter((result) => !result.ok);
+		const merged = mergeVfs(...succeeded.map((result) => result.vfs));
 
-		for (const result of results) {
-			if (result._tag === "ok") {
-				for (const [path, content] of result.vfs) {
-					merged.set(path, content);
-				}
-				totalFiles += result.vfs.size;
-			} else {
-				errors.push({ pkg: result.pkg, error: result.error });
-			}
-		}
+		yield* emit({
+			_tag: "BatchComplete",
+			loaded: succeeded.length,
+			failed: failed.length,
+			total: packages.length,
+			totalFiles: merged.size,
+			duration,
+		});
 
-		const durationMs = Date.now() - startTime;
-		const loadedCount = packages.length - errors.length;
-
-		// Emit a typed event for programmatic consumers (no-op unless an
-		// observer layer is provided; see TypeRegistryObserver).
-		yield* emitEvent(
-			RegistryEvent.BatchComplete({
-				loaded: loadedCount,
-				failed: errors.length,
-				total: packages.length,
-				totalFiles,
-				durationMs,
-			}),
-		);
-
-		if (errors.length === packages.length && packages.length > 0) {
-			yield* Effect.fail(
-				new PackageNotFoundError({
-					name: errors.map((e) => e.pkg.name).join(", "),
-					version: "",
-					message: `Failed to fetch VFS for all packages:\n${errors.map((e) => `- ${e.pkg.toString()}: ${String(e.error)}`).join("\n")}`,
+		if (failed.length === packages.length && packages.length > 0) {
+			return yield* Effect.fail(
+				new BatchLoadError({
+					failures: failed.map((result) => ({
+						name: result.pkg.name,
+						version: result.pkg.version,
+						error: result.error,
+					})),
 				}),
 			);
 		}
-
 		return merged;
 	});
-	return inner.pipe(Metric.trackDuration(batchDuration));
-};
 
-/**
- * Resolve an import specifier (e.g. `"zod"`, `"zod/lib/types"`) against a
- * cached package's `package.json` exports map.
- *
- * @remarks
- * The package must already be present in the cache. The resolution logic
- * delegates to {@link TypeResolver} which interprets the `exports`, `types`,
- * and `typings` fields of the cached `package.json`.
- *
- * @param pkg - The cached package to resolve against.
- * @param specifier - The bare import specifier to resolve (e.g. `"zod"` or `"zod/lib/types"`).
- * @returns An Effect that succeeds with a {@link ResolvedModule} describing the resolved file.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import type { ResolvedModule } from "type-registry-effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
- *   yield* TypeRegistry.fetchAndCache(pkg);
- *   const resolved: ResolvedModule = yield* TypeRegistry.resolveImport(pkg, "zod");
- *   console.log(`Resolved to: ${resolved.resolvedPath}`);
- *   return resolved;
- * });
- *
- * const resolved = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link getTypeEntries} to discover all entry points
- * @see {@link TypeResolver} for the underlying resolution service
- *
- * @public
- */
-export const resolveImport = (
-	pkg: PackageSpec,
-	specifier: string,
-): Effect.Effect<ResolvedModule, CacheError | ParseError | ResolutionError, CacheService | TypeResolver> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
-		const resolver = yield* TypeResolver;
-
-		const packageJsonContent = yield* cache.read(pkg, "package.json");
-		const packageJson = yield* Effect.try({
-			try: () => JSON.parse(packageJsonContent) as PackageJson,
-			catch: (error) => new ParseError({ source: "package.json", message: String(error) }),
-		});
-
-		return yield* resolver.resolveImport(specifier, packageJson, pkg);
+	const resolveImport = Effect.fn("TypeRegistry.resolveImport")(function* (pkg: PackageSpec, specifier: string) {
+		const manifest = yield* readManifest(pkg);
+		return TypeResolver.resolveImport(specifier, manifest, pkg);
 	});
 
-/**
- * Get all type entry points exported by a cached package.
- *
- * @remarks
- * Reads the cached `package.json` and delegates to {@link TypeResolver} to
- * enumerate every entry point that exposes type definitions (via `exports`,
- * `types`, or `typings` fields). The package must already be in the cache.
- *
- * @param pkg - The cached package to inspect.
- * @returns An Effect that succeeds with a read-only array of {@link ResolvedModule} entries.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import type { ResolvedModule } from "type-registry-effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "effect", version: "3.12.5" });
- *   yield* TypeRegistry.fetchAndCache(pkg);
- *   const entries: ReadonlyArray<ResolvedModule> = yield* TypeRegistry.getTypeEntries(pkg);
- *   for (const entry of entries) {
- *     console.log(`${entry.specifier} -> ${entry.resolvedPath}`);
- *   }
- *   return entries;
- * });
- *
- * const entries = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link resolveImport} to resolve a single specifier
- * @see {@link TypeResolver} for the underlying resolution service
- *
- * @public
- */
-export const getTypeEntries = (
-	pkg: PackageSpec,
-): Effect.Effect<
-	ReadonlyArray<ResolvedModule>,
-	CacheError | ParseError | ResolutionError,
-	CacheService | TypeResolver
-> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
-		const resolver = yield* TypeResolver;
-
-		const packageJsonContent = yield* cache.read(pkg, "package.json");
-		const packageJson = yield* Effect.try({
-			try: () => JSON.parse(packageJsonContent) as PackageJson,
-			catch: (error) => new ParseError({ source: "package.json", message: String(error) }),
-		});
-
-		return yield* resolver.resolveTypeEntries(packageJson, pkg);
+	const getTypeEntries = Effect.fn("TypeRegistry.getTypeEntries")(function* (pkg: PackageSpec) {
+		const manifest = yield* readManifest(pkg);
+		return TypeResolver.resolveTypeEntries(manifest, pkg);
 	});
 
-/**
- * Resolve a version reference to a concrete, pinned version string.
- *
- * @remarks
- * Accepts any npm-style version reference — `"latest"`, a semver range
- * like `"^1.0.0"`, or an exact version like `"3.23.8"` — and queries the
- * {@link PackageFetcher} (backed by the jsDelivr API) to determine the
- * matching published version.
- *
- * @param name - The npm package name (e.g. `"zod"`).
- * @param ref - A version reference: `"latest"`, a semver range, or an exact version.
- * @returns An Effect that succeeds with the resolved version string (e.g. `"3.23.8"`).
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import { TypeRegistry } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const version = yield* TypeRegistry.resolveVersion("zod", "latest");
- *   console.log(`Latest zod version: ${version}`);
- *   return version;
- * });
- *
- * const version = await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link PackageFetcher} for the underlying network service
- *
- * @public
- */
-export const resolveVersion = (
-	name: string,
-	ref: string,
-): Effect.Effect<string, NetworkError | PackageNotFoundError, PackageFetcher> =>
-	Effect.gen(function* () {
-		const fetcher = yield* PackageFetcher;
-		const resolved = yield* fetcher
-			.resolveVersion(name, ref)
-			.pipe(
-				Effect.tapError((error) =>
-					emitEvent(RegistryEvent.VersionResolveFailed({ package: name, requested: ref, reason: String(error) })),
-				),
+	const resolveVersion = Effect.fn("TypeRegistry.resolveVersion")(function* (name: string, ref: string) {
+		const resolved = yield* Effect.gen(function* () {
+			const meta = yield* fetcher.getVersions(name);
+			// `ref` is caller-controlled and `tags` decodes to a plain object
+			// inheriting Object.prototype — an unguarded index would resolve
+			// "constructor" or "toString" to inherited functions.
+			if (Object.hasOwn(meta.tags, ref)) {
+				const tagged = meta.tags[ref];
+				if (typeof tagged === "string") return tagged;
+			}
+			if (meta.versions.includes(ref)) return ref;
+			const range = yield* Range.parse(ref).pipe(
+				Effect.mapError(() => new VersionNotFoundError({ name, ref, available: meta.versions.slice(0, 20) })),
 			);
-		yield* emitEvent(RegistryEvent.VersionResolved({ package: name, requested: ref, resolved }));
+			const published = yield* Effect.forEach(meta.versions, (version) => SemVer.parse(version).pipe(Effect.option));
+			const best = Range.maxSatisfying(
+				published.filter(Option.isSome).map((option) => option.value),
+				range,
+			);
+			if (Option.isNone(best)) {
+				return yield* Effect.fail(new VersionNotFoundError({ name, ref, available: meta.versions.slice(0, 20) }));
+			}
+			return best.value.toString();
+		}).pipe(
+			Effect.tapError((error) =>
+				emit({
+					_tag: "VersionResolveFailed",
+					package: name,
+					requested: ref,
+					kind: error._tag === "VersionNotFoundError" ? "no-match" : error.status === 404 ? "not-found" : "network",
+				}),
+			),
+		);
+		yield* emit({ _tag: "VersionResolved", package: name, requested: ref, resolved });
 		return resolved;
 	});
 
-/**
- * Remove a package and all of its cached files from the disk cache.
- *
- * @param pkg - The package specification to remove.
- * @returns An Effect that succeeds with `void` once the cache entry is deleted.
- *
- * @example
- * ```typescript
- * import { Effect } from "effect";
- * import { TypeRegistry, PackageSpec } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
- *
- * const program = Effect.gen(function* () {
- *   const pkg = new PackageSpec({ name: "zod", version: "3.23.8" });
- *   yield* TypeRegistry.clearCache(pkg);
- *   console.log("Cache cleared for zod@3.23.8");
- * });
- *
- * await Effect.runPromise(Effect.provide(program, NodeLayer));
- * ```
- *
- * @see {@link hasCached} to check existence before clearing
- * @see {@link fetchAndCache} to repopulate the cache afterward
- *
- * @public
- */
-export const clearCache = (pkg: PackageSpec): Effect.Effect<void, CacheError, CacheService> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
-		yield* cache.remove(pkg);
+	const clearCache = Effect.fn("TypeRegistry.clearCache")(function* (pkg: PackageSpec) {
+		return yield* mutations.withPermits(1)(cache.remove(pkg));
 	});
 
+	const pruneCache = mutations.withPermits(1)(cache.prune).pipe(Effect.withSpan("TypeRegistry.pruneCache"));
+
+	return {
+		hasCached,
+		fetchAndCache,
+		getPackageVfs,
+		getVfs,
+		resolveImport,
+		getTypeEntries,
+		resolveVersion,
+		clearCache,
+		pruneCache,
+	} satisfies TypeRegistryShape;
+});
+
 /**
- * Prune every expired package from the cache.
+ * The facade: one service collapsing the cache, fetcher and resolver behind
+ * the operations documentation tooling actually calls.
  *
  * @remarks
- * Evicts all metadata entries whose TTL has elapsed from the SQLite metadata
- * store and deletes the corresponding on-disk directories. Packages cached
- * without a TTL never expire and are never pruned. Call this periodically (for
- * example on startup or a schedule) to keep the cache compact.
- *
- * @returns An Effect that succeeds with a {@link CachePruneResult} describing how
- *   many packages were removed and which ones.
+ * `yield* TypeRegistry` replaces the v3 floating-function namespace (which
+ * the rspress consumer immediately re-wrapped in its own service). Per-method
+ * error unions stay precise. Compose at the edge: platform layers + store
+ * `Cache.layerSqlite` + `TypeCache.layerXdg` + `PackageFetcher.layer` +
+ * `TypeRegistry.layer`.
  *
  * @example
- * ```typescript
+ * ```ts
+ * import { PackageSpec, TypeRegistry } from "type-registry-effect";
  * import { Effect } from "effect";
- * import { TypeRegistry } from "type-registry-effect";
- * import { NodeLayer } from "type-registry-effect/node";
  *
  * const program = Effect.gen(function* () {
- *   const { count, removed } = yield* TypeRegistry.pruneCache();
- *   console.log(`Pruned ${count} package(s):`, removed);
+ *   const registry = yield* TypeRegistry;
+ *   return yield* registry.getVfs([PackageSpec.fromString("zod@3.23.8")]);
  * });
- *
- * await Effect.runPromise(Effect.provide(program, NodeLayer));
  * ```
- *
- * @see {@link clearCache} to remove a single package
  *
  * @public
  */
-export const pruneCache = (): Effect.Effect<CachePruneResult, CacheError, CacheService> =>
-	Effect.gen(function* () {
-		const cache = yield* CacheService;
-		return yield* cache.prune;
-	});
+export class TypeRegistry extends Context.Service<TypeRegistry, TypeRegistryShape>()(
+	"type-registry-effect/TypeRegistry",
+) {
+	/** The live facade over {@link TypeCache} and {@link PackageFetcher}. */
+	static readonly layer: Layer.Layer<TypeRegistry, never, TypeCache | PackageFetcher> = Layer.effect(
+		TypeRegistry,
+		make,
+	);
+}

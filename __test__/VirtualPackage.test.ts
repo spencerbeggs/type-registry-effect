@@ -1,178 +1,123 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { NodeFileSystem } from "@effect/platform-node";
-import { Effect } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { VirtualPackage } from "../src/VirtualPackage.js";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect, FileSystem } from "effect";
+import { VirtualPackage, mergeVfs, prefixVfs } from "../src/index.js";
 
 describe("VirtualPackage", () => {
-	describe("create (single entry)", () => {
-		it("should create a virtual package with a single index.d.ts entry", () => {
-			const pkg = VirtualPackage.create("my-pkg", "2.0.0", "export declare const x: number;");
-			expect(pkg.name).toBe("my-pkg");
-			expect(pkg.version).toBe("2.0.0");
-		});
+	it("create produces a single-entry package with a types field", () => {
+		const pkg = VirtualPackage.create("@my-org/api-types", "1.0.0", "export interface User { id: string }");
+		const vfs = pkg.toVfs();
+		assert.deepStrictEqual(
+			[...vfs.keys()],
+			["node_modules/@my-org/api-types/package.json", "node_modules/@my-org/api-types/index.d.ts"],
+		);
+		const manifest = JSON.parse(vfs.get("node_modules/@my-org/api-types/package.json") ?? "{}") as Record<
+			string,
+			unknown
+		>;
+		assert.strictEqual(manifest.name, "@my-org/api-types");
+		assert.strictEqual(manifest.types, "index.d.ts");
+		assert.strictEqual(manifest.exports, undefined);
+	});
 
-		it("should generate correct VFS with node_modules prefix", () => {
-			const declarations = "export declare const x: number;";
-			const pkg = VirtualPackage.create("my-pkg", "1.0.0", declarations);
-			const vfs = pkg.generateVfs();
-
-			expect(vfs.has("node_modules/my-pkg/package.json")).toBe(true);
-			expect(vfs.has("node_modules/my-pkg/index.d.ts")).toBe(true);
-			expect(vfs.get("node_modules/my-pkg/index.d.ts")).toBe(declarations);
-		});
-
-		it("should generate package.json with types field for single entry", () => {
-			const pkg = VirtualPackage.create("my-pkg", "3.1.0", "export {};");
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/my-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.name).toBe("my-pkg");
-			expect(pkgJson.version).toBe("3.1.0");
-			expect(pkgJson.types).toBe("index.d.ts");
-			expect(pkgJson.exports).toBeUndefined();
+	it("createMultiEntry produces an exports map keyed by entry base name", () => {
+		const pkg = VirtualPackage.createMultiEntry(
+			"@my-org/sdk",
+			"2.0.0",
+			new Map([
+				["index.d.ts", "export declare function run(): void;"],
+				["testing.d.ts", "export declare function mock(): void;"],
+			]),
+		);
+		const vfs = pkg.toVfs();
+		assert.isTrue(vfs.has("node_modules/@my-org/sdk/testing.d.ts"));
+		const manifest = JSON.parse(vfs.get("node_modules/@my-org/sdk/package.json") ?? "{}") as {
+			exports?: Record<string, { types: string }>;
+		};
+		assert.deepStrictEqual(manifest.exports, {
+			".": { types: "./index.d.ts" },
+			"./testing": { types: "./testing.d.ts" },
 		});
 	});
 
-	describe("createMultiEntry", () => {
-		it("should create a virtual package with multiple entries", () => {
-			const entries = new Map<string, string>();
-			entries.set("index.d.ts", "export declare const main: string;");
-			entries.set("testing.d.ts", "export declare const test: boolean;");
-
-			const pkg = VirtualPackage.createMultiEntry("multi-pkg", "1.0.0", entries);
-			const vfs = pkg.generateVfs();
-
-			expect(vfs.has("node_modules/multi-pkg/package.json")).toBe(true);
-			expect(vfs.has("node_modules/multi-pkg/index.d.ts")).toBe(true);
-			expect(vfs.has("node_modules/multi-pkg/testing.d.ts")).toBe(true);
-			expect(vfs.get("node_modules/multi-pkg/index.d.ts")).toBe("export declare const main: string;");
-			expect(vfs.get("node_modules/multi-pkg/testing.d.ts")).toBe("export declare const test: boolean;");
-		});
-
-		it("should generate package.json with exports map for multiple entries", () => {
-			const entries = new Map<string, string>();
-			entries.set("index.d.ts", "export {};");
-			entries.set("testing.d.ts", "export {};");
-
-			const pkg = VirtualPackage.createMultiEntry("multi-pkg", "2.0.0", entries);
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/multi-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.name).toBe("multi-pkg");
-			expect(pkgJson.version).toBe("2.0.0");
-			expect(pkgJson.types).toBeUndefined();
-			expect(pkgJson.exports).toBeDefined();
-			expect(pkgJson.exports["."]).toEqual({ types: "./index.d.ts" });
-			expect(pkgJson.exports["./testing"]).toEqual({ types: "./testing.d.ts" });
-		});
+	it("an empty createMultiEntry is a construction defect", () => {
+		// A package with no entries would ship a types field pointing at a
+		// file that does not exist — developer wiring, so it throws.
+		assert.throws(() => VirtualPackage.createMultiEntry("hollow", "1.0.0", new Map()), /at least one entry file/);
+		// Direct construction paths hit the backstop at Vfs generation.
+		assert.throws(
+			() => VirtualPackage.make({ name: "hollow", version: "1.0.0", entries: new Map() }).toVfs(),
+			/no entry files/,
+		);
 	});
 
-	describe("fromFile", () => {
-		let tmpDir: string;
-		let dtsFilePath: string;
-
-		beforeEach(() => {
-			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vp-test-"));
-			dtsFilePath = path.join(tmpDir, "index.d.ts");
-			fs.writeFileSync(dtsFilePath, "export declare function hello(): string;", "utf-8");
-		});
-
-		afterEach(() => {
-			fs.rmSync(tmpDir, { recursive: true, force: true });
-		});
-
-		it("should load declarations from a .d.ts file", async () => {
-			const pkg = await Effect.runPromise(
-				VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath).pipe(Effect.provide(NodeFileSystem.layer)),
-			);
-			const vfs = pkg.generateVfs();
-
-			expect(vfs.get("node_modules/file-pkg/index.d.ts")).toBe("export declare function hello(): string;");
-		});
-
-		it("should generate correct package.json for file-based package", async () => {
-			const pkg = await Effect.runPromise(
-				VirtualPackage.fromFile("file-pkg", "0.1.0", dtsFilePath).pipe(Effect.provide(NodeFileSystem.layer)),
-			);
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/file-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.name).toBe("file-pkg");
-			expect(pkgJson.version).toBe("0.1.0");
-			expect(pkgJson.types).toBe("index.d.ts");
-		});
+	it("entries whose names collide after extension normalization are a defect", () => {
+		const pkg = VirtualPackage.createMultiEntry(
+			"colliding",
+			"1.0.0",
+			new Map([
+				["index.d.ts", "export {};"],
+				["index.d.mts", "export {};"],
+			]),
+		);
+		// Both normalize to the "." export key — silently keeping the last one
+		// would drop an entry, so it throws naming the colliding files.
+		assert.throws(() => pkg.toVfs(), /index\.d\.ts.*index\.d\.mts.*"\."/);
 	});
 
-	describe("generateVfs", () => {
-		it("should produce correct node_modules/ paths", () => {
-			const pkg = VirtualPackage.create("@scope/pkg", "1.0.0", "export {};");
-			const vfs = pkg.generateVfs();
+	it("a single non-index entry keeps its own file name as the types field", () => {
+		const pkg = VirtualPackage.createMultiEntry("solo", "1.0.0", new Map([["main.d.ts", "export {};"]]));
+		const manifest = JSON.parse(pkg.toVfs().get("node_modules/solo/package.json") ?? "{}") as Record<string, unknown>;
+		assert.strictEqual(manifest.types, "main.d.ts");
+	});
 
-			const keys = [...vfs.keys()];
-			for (const key of keys) {
-				expect(key.startsWith("node_modules/@scope/pkg/")).toBe(true);
+	it.effect("fromFile reads through the FileSystem service", () =>
+		Effect.gen(function* () {
+			const pkg = yield* VirtualPackage.fromFile("from-disk", "1.0.0", "/decls/api.d.ts");
+			const vfs = pkg.toVfs();
+			assert.strictEqual(vfs.get("node_modules/from-disk/index.d.ts"), "export declare const fromDisk: true;");
+		}).pipe(
+			Effect.provide(
+				FileSystem.layerNoop({
+					readFileString: (path) =>
+						path === "/decls/api.d.ts"
+							? Effect.succeed("export declare const fromDisk: true;")
+							: Effect.die(new Error(`unexpected read: ${path}`)),
+				}),
+			),
+		),
+	);
+
+	it("stays subclass-friendly for the rspress consumer", () => {
+		class ApiExtractedPackage extends VirtualPackage {
+			get entryCount(): number {
+				return this.entries.size;
 			}
+		}
+		const pkg = new ApiExtractedPackage({
+			name: "extracted",
+			version: "0.1.0",
+			entries: new Map([["index.d.ts", "export {};"]]),
 		});
+		assert.strictEqual(pkg.entryCount, 1);
+		assert.isTrue(pkg.toVfs().has("node_modules/extracted/index.d.ts"));
+	});
+});
 
-		it("should include exactly entries.size + 1 files (entries + package.json)", () => {
-			const entries = new Map<string, string>();
-			entries.set("index.d.ts", "export {};");
-			entries.set("utils.d.ts", "export {};");
-			entries.set("types.d.ts", "export {};");
-
-			const pkg = VirtualPackage.createMultiEntry("big-pkg", "1.0.0", entries);
-			const vfs = pkg.generateVfs();
-
-			expect(vfs.size).toBe(4); // 3 entries + package.json
-		});
-
-		it("should handle empty entries", () => {
-			const pkg = VirtualPackage.createMultiEntry("empty-pkg", "1.0.0", new Map());
-			const vfs = pkg.generateVfs();
-
-			expect(vfs.size).toBe(1); // Just package.json
-			expect(vfs.has("node_modules/empty-pkg/package.json")).toBe(true);
-		});
+describe("Vfs helpers", () => {
+	it("mergeVfs merges left to right with later entries winning", () => {
+		const merged = mergeVfs(
+			new Map([
+				["a.d.ts", "first"],
+				["shared.d.ts", "first"],
+			]),
+			new Map([["shared.d.ts", "second"]]),
+		);
+		assert.strictEqual(merged.size, 2);
+		assert.strictEqual(merged.get("shared.d.ts"), "second");
 	});
 
-	describe("generatePackageJson", () => {
-		it("should use types field for zero entries", () => {
-			const pkg = VirtualPackage.createMultiEntry("zero-pkg", "1.0.0", new Map());
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/zero-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.types).toBe("index.d.ts");
-			expect(pkgJson.exports).toBeUndefined();
-		});
-
-		it("should use types field for exactly one entry", () => {
-			const pkg = VirtualPackage.create("one-pkg", "1.0.0", "export {};");
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/one-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.types).toBe("index.d.ts");
-		});
-
-		it("should use exports map for two or more entries", () => {
-			const entries = new Map<string, string>();
-			entries.set("index.d.ts", "export {};");
-			entries.set("testing.d.ts", "export {};");
-
-			const pkg = VirtualPackage.createMultiEntry("two-pkg", "1.0.0", entries);
-			const vfs = pkg.generateVfs();
-
-			const raw = vfs.get("node_modules/two-pkg/package.json") ?? "";
-			const pkgJson = JSON.parse(raw);
-			expect(pkgJson.exports).toBeDefined();
-			expect(pkgJson.types).toBeUndefined();
-		});
+	it("prefixVfs prefixes and normalizes leading slashes", () => {
+		const prefixed = prefixVfs("pkg", new Map([["/dist/index.d.ts", "content"]]));
+		assert.deepStrictEqual([...prefixed.keys()], ["node_modules/pkg/dist/index.d.ts"]);
 	});
 });

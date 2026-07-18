@@ -1,37 +1,20 @@
-# type-registry-effect Documentation
+# type-registry-effect documentation
 
-## What This Library Does
+TypeScript virtual file systems for Effect: fetch, cache and resolve type definitions from npm via the jsDelivr CDN, and build `@typescript/vfs` environments for Twoslash-style documentation tooling.
 
-type-registry-effect fetches TypeScript type definitions from the jsDelivr CDN, caches them to disk, resolves module imports from package.json exports and typesVersions fields, and builds virtual file systems (VFS) for use with @typescript/vfs and Twoslash. It is designed for documentation tooling that needs type-aware code samples.
+## Install
 
-The library exposes composable `Effect` programs -- not a class with methods. Every function returns an `Effect<A, E, R>` with typed errors and explicit service requirements that the TypeScript compiler enforces at build time.
+```bash
+npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+```
 
-## Who This Is For
+Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed only for `TsEnvironment`.
 
-- Documentation site authors who use Twoslash for interactive TypeScript code blocks
-- Build tool developers who need to resolve and bundle type definitions
-- TypeScript developers familiar with Effect who want composable, testable type-fetching programs
-- TypeScript developers new to Effect who want a Node.js convenience API
+## Pages
 
-## Guides
-
-Step-by-step instructions for common tasks:
-
-- [Getting Started](./guides/getting-started.md) -- Installation, peer dependencies, and three usage patterns
-- [Caching](./guides/caching.md) -- Cache configuration, XDG directories, and CacheMetadata
-- [Advanced Usage](./guides/advanced-usage.md) -- Custom layers, error handling, concurrent loading, and testing
-- [Observability](./guides/observability.md) -- Event system (note: being redesigned for Effect logging)
-- [Troubleshooting](./guides/troubleshooting.md) -- Peer dependency mismatches, missing layers, and typed errors
-
-## Architecture
-
-Understanding the service and layer design:
-
-- [Architecture Overview](./architecture/overview.md) -- Service/Layer diagram, platform abstraction, and type-level dependency enforcement
-
-## Quick Reference
-
-| Entry Point | What It Provides |
-| --- | --- |
-| `type-registry-effect` | Platform-agnostic Effect programs, schemas, errors, services, layers |
-| `type-registry-effect/node` | `NodeLayer` (Node.js platform layer) and Promise convenience API |
+- [Getting started](./01-getting-started.md) — Install the package, understand which peers you actually need, and wire the services for either a throwaway cache or a persistent XDG-rooted one.
+- [Caching](./02-caching.md) — `TypeCache` keeps fetched declarations local so repeated lookups cost a disk read instead of a CDN round trip.
+- [Observability](./03-observability.md) — The library is silent by default, with diagnostics available through a typed event channel, tracing spans and typed errors.
+- [Architecture](./04-architecture.md) — How the services fit together, why this package builds no platform layers of its own, and what the error model guarantees.
+- [API reference](./05-api-reference.md) — Everything exported from `type-registry-effect`.
+- [Troubleshooting](./06-troubleshooting.md) — Common failures, and what each one is actually telling you.
