@@ -6,6 +6,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type { RegistryEvent } from "../src/index.js";
 import { FetchError, PackageFetcher, PackageNotFoundError, PackageSpec, RegistryObserver } from "../src/index.js";
+import { TYPE_FILE_PATTERN, fileUrl } from "../src/internal/jsdelivr.js";
 import { MAX_TYPE_BYTES_PER_PACKAGE, MAX_TYPE_FILES_PER_PACKAGE } from "../src/internal/limits.js";
 
 const zod = PackageSpec.make({ name: "zod", version: "3.23.8" });
@@ -280,5 +281,33 @@ describe("PackageFetcher", () => {
 			if (error instanceof FetchError) assert.strictEqual(error.kind, "body");
 			assert.strictEqual(downloads, 0);
 		}),
+	);
+});
+
+describe("jsdelivr internals", () => {
+	it("TYPE_FILE_PATTERN matches declaration forms only, never across path segments", () => {
+		for (const name of ["index.d.ts", "index.d.mts", "index.d.cts", "styles.d.css.ts"]) {
+			assert.isTrue(TYPE_FILE_PATTERN.test(name), `expected match: ${name}`);
+		}
+		for (const name of ["assets.d.css/index.ts", "x.d.node.cts", "index.dts", "index.ts"]) {
+			assert.isFalse(TYPE_FILE_PATTERN.test(name), `expected no match: ${name}`);
+		}
+	});
+
+	it("fileUrl percent-encodes segments and refuses package-escaping paths", () => {
+		assert.strictEqual(fileUrl(zod, "dist/a?b#c.d.ts"), "https://cdn.jsdelivr.net/npm/zod@3.23.8/dist/a%3Fb%23c.d.ts");
+		// Inert "." segments are dropped; the path stays inside the package.
+		assert.strictEqual(fileUrl(zod, "./dist/index.d.ts"), "https://cdn.jsdelivr.net/npm/zod@3.23.8/dist/index.d.ts");
+		assert.throws(() => fileUrl(zod, "../../evil.d.ts"), /escapes the pinned package/);
+		assert.throws(() => fileUrl(zod, "dist/../../evil.d.ts"), /escapes the pinned package/);
+	});
+
+	it.effect("downloadFile fails typed, not defectively, on a traversal path", () =>
+		Effect.gen(function* () {
+			const fetcher = yield* PackageFetcher;
+			const error = yield* Effect.flip(fetcher.downloadFile(zod, "../escape.d.ts"));
+			assert.instanceOf(error, FetchError);
+			if (error instanceof FetchError) assert.strictEqual(error.kind, "transport");
+		}).pipe(Effect.provide(fetcherLayer(() => text("should never be requested")))),
 	);
 });

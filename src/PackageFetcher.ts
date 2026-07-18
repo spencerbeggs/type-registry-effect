@@ -276,7 +276,14 @@ const make: Effect.Effect<PackageFetcherShape, never, HttpClient.HttpClient> = E
 	});
 
 	const downloadFile = Effect.fn("PackageFetcher.downloadFile")(function* (pkg: PackageSpec, filePath: string) {
-		return yield* fetchText(fileUrl(pkg, filePath)).pipe(Effect.mapError(promote404(pkg)));
+		// fileUrl throws when the path escapes the pinned package (untrusted
+		// tree names and resolver output land here); that is a typed failure
+		// at this boundary, never a defect.
+		const url = yield* Effect.try({
+			try: () => fileUrl(pkg, filePath),
+			catch: (cause) => new FetchError({ url: fileTreeUrl(pkg), kind: "transport", cause }),
+		});
+		return yield* fetchText(url).pipe(Effect.mapError(promote404(pkg)));
 	});
 
 	const getPackageJson = Effect.fn("PackageFetcher.getPackageJson")(function* (pkg: PackageSpec) {
