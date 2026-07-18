@@ -5,11 +5,11 @@ Install the package, understand which peers you actually need, and wire the serv
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
 ```
 
 ```bash
-pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
 ```
 
 Requires Node.js >=24.11.0.
@@ -25,13 +25,14 @@ Every peer except the TypeScript pair is required, because its types appear in t
 | `@effected/store` | Yes | The `Cache` service backing the metadata plane. |
 | `@effected/xdg` | Yes | `AppDirs`, used by `TypeCache.layerXdg` to resolve a per-user cache root. |
 | `@effected/semver` | Yes | Range parsing behind `resolveVersion`. |
-| `typescript` | Optional | Only for `TsEnvironment`, loaded lazily. |
-| `@typescript/vfs` | Optional | Only for `TsEnvironment`, loaded lazily. |
+| `@effected/tsconfig-json` | Yes | `CompilerOptions`, the tsconfig-JSON form `TsEnvironment.make` takes. |
+| `typescript` | Optional | Only for `TsEnvironment`, loaded lazily at runtime. |
+| `@typescript/vfs` | Optional | Only for `TsEnvironment`, loaded lazily at runtime. |
 
 Install the optional pair when you build TypeScript environments rather than raw VFS maps:
 
 ```bash
-npm install --save-optional typescript @typescript/vfs
+pnpm add typescript @typescript/vfs
 ```
 
 ## Composition happens at the edge
@@ -171,16 +172,17 @@ Use `createMultiEntry` for several entry points, which generates a synthetic `ex
 ```ts
 import { TsEnvironment } from "type-registry-effect";
 import { Effect } from "effect";
-import * as ts from "typescript";
 
 const program = Effect.gen(function* () {
   const environment = yield* TsEnvironment.make({
     vfs,
-    compilerOptions: { strict: true, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { strict: true, target: "es2022" },
   });
   return environment.languageService.getProgram();
 });
 ```
+
+`compilerOptions` is tsconfig JSON form — `CompilerOptions.Type` from `@effected/tsconfig-json`, the same shape you would write in a `tsconfig.json`. Enum-valued fields are strings (`"es2022"`, not `ts.ScriptTarget.ES2022`) and are converted to the compiler's numeric enums internally, so building options needs no `typescript` import.
 
 VFS paths are re-rooted under `projectRoot`, which defaults to `process.cwd()`. Declaration files in the map become the environment's root files.
 

@@ -121,9 +121,18 @@ guessing or porting v3 idioms. Never edit it.
   pnpm catalogs
 - `@effected/semver`, `@effected/store`, `@effected/xdg` (replaced v3's
   `semver-effect` / `xdg-effect`)
-- `typescript` pinned to `^6.0.3` — tsgo 7.x lacks the compiler API
-  `TsEnvironment` needs
-- `typescript` and `@typescript/vfs` are **optional** peers
+- `@effected/tsconfig-json` (dev + peer) supplies `CompilerOptions` and
+  `TsEnumCodec`. `TsEnvironmentOptions.compilerOptions` is `CompilerOptions.Type`
+  — tsconfig JSON form (`{ target: "es2022" }`), converted to the compiler's
+  numeric enums internally via `TsEnumCodec.encodeCompilerOptions`. `src/` and
+  `__test__/` have **no** compile-time dependency on the `typescript` package.
+- Dev `typescript` is `catalog:silk` (7.0.2, native tsc) — what `types:check`
+  runs. TS 7 ships no JS compiler API, so the classic compiler arrives as the
+  dev-only npm alias `typescript-classic` (`npm:typescript@^6.0.3`), wired into
+  tests by vitest `resolve.alias` (`typescript` → `typescript-classic`).
+- The `typescript` **peer** stays `^6.0.3` and optional — runtime-only, for
+  consumers calling `TsEnvironment.make`. `@typescript/vfs` is also an
+  **optional** peer.
 
 ### Code Quality
 
@@ -144,7 +153,8 @@ guessing or porting v3 idioms. Never edit it.
 - **Framework**: Vitest with `@effect/vitest` and `@vitest-agent/plugin`
 - **Pool**: Uses forks (not threads) for Effect-TS compatibility
 - **Coverage**: v8 provider; thresholds come from
-  `AgentPlugin.COVERAGE_LEVELS.standard` in `vitest.config.ts`
+  `AgentPlugin.COVERAGE_LEVELS.standard`, `coverageTargets` from `strict` (see
+  `vitest.config.ts`)
 - **E2E**: `__test__/e2e/` gated behind `TS_VFS_E2E=1`; hits live jsDelivr
 - Swap the metadata plane with `Cache.layerTest()` instead of touching a real
   database file

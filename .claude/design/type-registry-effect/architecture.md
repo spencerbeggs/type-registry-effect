@@ -67,10 +67,20 @@ contents. Everything either produces a `Vfs` (`TypeRegistry`, `VirtualPackage`) 
 - **@effected/store** — `Cache`, the SQLite-backed metadata plane with native TTL and prune
 - **@effected/xdg** — `AppDirs`, XDG cache-directory resolution
 - **@effected/semver** — `Range` / `SemVer` for local version resolution
+- **@effected/tsconfig-json** — `CompilerOptions` (tsconfig JSON form) and `TsEnumCodec`, which converts
+  JSON-form enum fields to the compiler's numeric enums
 - **@typescript/vfs** + **typescript** — optional peers, loaded lazily and only by `TsEnvironment`
 
-`typescript` is pinned to `^6.0.3` in both dev and peer ranges: the shared catalog maps TypeScript to 7.x/tsgo,
-which does not expose the compiler API `TsEnvironment` needs.
+`src/` has no compile-time dependency on the `typescript` package. `TsEnvironment` types its
+`compilerOptions` as `CompilerOptions.Type` from `@effected/tsconfig-json` and imports the compiler only as a
+runtime value, so the public surface does not vary with the installed TypeScript.
+
+The `typescript` **peer** stays `^6.0.3` and optional: TypeScript 7.x/tsgo is a native binary that ships no JS
+compiler API, so a consumer calling `TsEnvironment.make` must supply a classic compiler at runtime. The **dev**
+dependency is the shared catalog's `catalog:silk` (7.0.2, native tsc), which satisfies the `@savvy-web/bundler`
+`^7` peer; the classic compiler needed by the `TsEnvironment` tests arrives through the dev-only npm alias
+`typescript-classic` (`npm:typescript@^6.0.3`) and a Vitest `resolve.alias` — see
+[Testing Strategy](#testing-strategy).
 
 ---
 
@@ -90,7 +100,7 @@ into this standalone repo.
 - Metadata caching on `@effected/store`'s `Cache` with native TTL, evict-on-read expiry and bulk prune.
 - Typed progress events (`RegistryEvent` / `RegistryObserver`), opt-in and silent by default.
 - Spans on every public operation via `Effect.fn("<Service>.<method>")` / `Effect.withSpan`.
-- Test suites per module plus a self-gated live-CDN e2e suite: 82 passing, 1 skipped (the gated e2e).
+- Test suites per module plus a self-gated live-CDN e2e suite: 85 passing, 1 skipped (the gated e2e).
 - `.repos/effect-smol` vendored as a sparse, read-only git submodule pinned to `effect@4.0.0-beta.98` — the
   authority on what v4 actually exports, with the v3→v4 migration notes.
 
@@ -145,6 +155,12 @@ static pure functions with `Option` returns where the manifest genuinely offers 
 is the only module that touches them and imports them inside `make`, so a missing peer is a typed
 `TsEnvironmentError` rather than an import-time crash, and a consumer that never calls it never loads the
 compiler.
+
+Laziness at runtime is only half of it: the seam also carries no compile-time dependency on `typescript`.
+Typing `compilerOptions` as `@effected/tsconfig-json`'s `CompilerOptions.Type` instead of `ts.CompilerOptions`
+means the declarations this package emits never reference the compiler, so the published types build and
+resolve whether or not a consumer has a classic TypeScript installed — and the repo itself can typecheck under
+7.x/tsgo while the tests run against a 6.x compiler.
 
 ---
 
@@ -358,10 +374,23 @@ Tests swap `Cache.layerSqlite` for `Cache.layerTest()` (`:memory:`) and `layerXd
 `@typescript/vfs`, builds a system map from `createDefaultMapFromNodeModules` plus the `Vfs`, and calls
 `createFSBackedSystem` + `createVirtualTypeScriptEnvironment`.
 
-Two documented consequences:
+`compilerOptions` is `CompilerOptions.Type` — tsconfig JSON form, `{ target: "es2022" }` rather than
+`ts.ScriptTarget.ES2022`. `TsEnumCodec.encodeCompilerOptions` converts the enum-valued fields to the compiler's
+numeric enums inside `make`, which is the only place the two representations meet. This is what keeps
+`TsEnvironmentOptions` free of `import type * as ts`: consumers author options as data, and the numeric
+encoding is an implementation detail of the seam.
+
+Three documented consequences:
 
 - VFS paths are re-rooted under `projectRoot` (default `process.cwd()`, which v3 hardcoded). Bare
   `node_modules/…` keys do not resolve — probed against `@typescript/vfs` 1.6.x.
+- The `lib.*.d.ts` directory is derived from the compiler module that actually loaded, via
+  `ts.sys.getExecutingFilePath()`, and passed explicitly as `tsLibDirectory` to
+  `createDefaultMapFromNodeModules` and `createFSBackedSystem`. The `@typescript/vfs` default resolves lib
+  files through `require.resolve("typescript")`, which diverges from the loaded module when the classic
+  compiler is installed under an npm alias. `sys` is reached structurally (optional chaining on an inline
+  type) because the installed `typescript` declarations may be the native tsc's version-only stub, which
+  types none of the compiler API the runtime module actually provides.
 - `createDefaultMapFromNodeModules` and `createFSBackedSystem` read the real filesystem through TypeScript's own
   `sys`, outside the Effect `FileSystem` service. This is accepted and is why this module is the integrated-tier
   surface of the package.
@@ -439,7 +468,13 @@ for files, `FileSystem.layerNoop` to force IO failures into `TypeCacheError`, an
 `Effect.exit` to assert that wiring defects (relative `cacheDir`, bad namespace) die.
 
 `__test__/e2e/jsdelivr.e2e.test.ts` hits the live CDN and is self-gated behind `TS_VFS_E2E=1`, so CI never
-depends on CDN availability. Current state: 82 passing, 1 skipped (the gated e2e).
+depends on CDN availability.
+
+The `TsEnvironment` suite needs a compiler with a JS API, which the catalog `typescript` (7.x, native tsc) is
+not. `vitest.config.ts` therefore declares `resolve.alias` mapping `typescript` to the dev-only
+`typescript-classic` alias package (`npm:typescript@^6.0.3`), so the repo builds and typechecks against the
+catalog compiler while tests exercise the classic one. This aliasing is why `TsEnvironment.make` derives its
+lib directory from the loaded module rather than trusting `require.resolve("typescript")`.
 
 Vitest runs on forks (not threads) for Effect compatibility, with coverage thresholds of 80% lines/statements,
 70% functions, 60% branches.

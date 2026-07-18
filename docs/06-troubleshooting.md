@@ -51,7 +51,9 @@ These are not recoverable at runtime, so they surface immediately instead of bec
 npm install --save-optional typescript @typescript/vfs
 ```
 
-The package pins `typescript` to a version whose compiler API `TsEnvironment` needs. The tsgo 7.x line does not expose that API and will not work here.
+`TsEnvironment` needs the classic compiler and its JavaScript API, so install the `typescript` 6 line. TypeScript 7's native `tsc` ships no JS API and will not work here; if you keep it installed for builds, alias the classic compiler alongside it.
+
+Compiler options are unaffected by which compiler is installed: `compilerOptions` takes tsconfig JSON form from `@effected/tsconfig-json`, so nothing in your own code imports `typescript` to build them.
 
 ## A package fails to load
 

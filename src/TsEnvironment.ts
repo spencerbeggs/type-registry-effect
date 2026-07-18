@@ -1,6 +1,7 @@
+import type { CompilerOptions } from "@effected/tsconfig-json";
+import { TsEnumCodec } from "@effected/tsconfig-json";
 import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 import { Effect, Schema } from "effect";
-import type * as ts from "typescript";
 import { isTypeDefinition } from "./internal/resolution.js";
 import type { Vfs } from "./Vfs.js";
 
@@ -28,8 +29,13 @@ export class TsEnvironmentError extends Schema.TaggedErrorClass<TsEnvironmentErr
 export interface TsEnvironmentOptions {
 	/** The virtual file system to typecheck against. */
 	readonly vfs: Vfs;
-	/** Compiler options for the language service. */
-	readonly compilerOptions: ts.CompilerOptions;
+	/**
+	 * Compiler options for the language service, in tsconfig JSON form
+	 * (`{ target: "es2022" }`, not `ts.ScriptTarget.ES2022`). Enum-valued
+	 * fields are converted to the compiler's numeric enums internally, so this
+	 * type has no dependency on the `typescript` package.
+	 */
+	readonly compilerOptions: CompilerOptions.Type;
 	/**
 	 * The directory VFS paths are rooted under and the filesystem fallback
 	 * root. Defaults to `process.cwd()` (which v3 hardcoded).
@@ -62,11 +68,10 @@ export interface TsEnvironmentOptions {
  * @example
  * ```ts
  * import { TsEnvironment } from "type-registry-effect";
- * import * as ts from "typescript";
  *
  * const environment = TsEnvironment.make({
  *   vfs,
- *   compilerOptions: { strict: true, target: ts.ScriptTarget.ES2022 },
+ *   compilerOptions: { strict: true, target: "es2022" },
  * });
  * ```
  *
@@ -89,11 +94,33 @@ export class TsEnvironment {
 					const typescript = tsModule.default;
 					const projectRoot = options.projectRoot ?? process.cwd();
 
+					// JSON-form options ("es2022") become the compiler's numeric
+					// enums here — the only place the two representations meet.
+					const compilerOptions = TsEnumCodec.encodeCompilerOptions(options.compilerOptions) as Parameters<
+						typeof tsVfs.createDefaultMapFromNodeModules
+					>[0];
+
+					// Locate lib.*.d.ts next to the compiler module that actually
+					// loaded, not via require.resolve("typescript") (the vfs
+					// default) — the two diverge when the classic compiler is
+					// installed under an npm alias (e.g. alongside the native
+					// TS 7 tsc, which ships no JS API or lib directory).
+					// Structural access: the installed typescript's declarations may
+					// be the native tsc's version-only stub, which types none of
+					// the compiler API the consumer-provided module actually has.
+					const executing = (
+						typescript as { readonly sys?: { readonly getExecutingFilePath?: () => string } }
+					).sys?.getExecutingFilePath?.();
+					const libDirectory =
+						executing === undefined
+							? undefined
+							: executing.slice(0, Math.max(executing.lastIndexOf("/"), executing.lastIndexOf("\\")));
+
 					// Lib files resolve from the real node_modules; user files are
 					// re-rooted under projectRoot (bare `node_modules/…` keys do not
 					// resolve — probed against @typescript/vfs 1.6.x).
 					const system = new Map<string, string>(
-						tsVfs.createDefaultMapFromNodeModules(options.compilerOptions, typescript),
+						tsVfs.createDefaultMapFromNodeModules(compilerOptions, typescript, libDirectory),
 					);
 					const rootFiles: Array<string> = [];
 					for (const [path, content] of options.vfs) {
@@ -102,8 +129,8 @@ export class TsEnvironment {
 						if (isTypeDefinition(rooted)) rootFiles.push(rooted);
 					}
 
-					const sys = tsVfs.createFSBackedSystem(system, projectRoot, typescript);
-					return tsVfs.createVirtualTypeScriptEnvironment(sys, rootFiles, typescript, options.compilerOptions);
+					const sys = tsVfs.createFSBackedSystem(system, projectRoot, typescript, libDirectory);
+					return tsVfs.createVirtualTypeScriptEnvironment(sys, rootFiles, typescript, compilerOptions);
 				},
 				catch: (cause) => new TsEnvironmentError({ cause }),
 			});

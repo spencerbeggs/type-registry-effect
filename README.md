@@ -14,14 +14,14 @@ Documentation tooling that typechecks code samples needs the declaration files f
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
 ```
 
 ```bash
-pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
 ```
 
-Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed only for `TsEnvironment`:
+Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed at runtime only when you call `TsEnvironment`:
 
 ```bash
 pnpm add typescript @typescript/vfs
@@ -68,7 +68,7 @@ await Effect.runPromise(program.pipe(Effect.provide(RegistryLayer)));
 - `TypeCache` — a two-plane cache: declaration files on disk, per-package metadata in an `@effected/store` `Cache` with native TTL expiry and pruning.
 - `PackageFetcher` — the jsDelivr-backed CDN client, requiring only an `HttpClient`.
 - `TypeResolver` — static resolution of import specifiers and type entry points against a package manifest, covering `exports`, `typesVersions` and legacy fields.
-- `TsEnvironment` — builds a `VirtualTypeScriptEnvironment` over a VFS, loading the optional `typescript` peers lazily so a consumer that never calls it never loads the compiler.
+- `TsEnvironment` — builds a `VirtualTypeScriptEnvironment` over a VFS from tsconfig-JSON compiler options, loading the optional `typescript` peers lazily so a consumer that never calls it never loads the compiler.
 - `VirtualPackage` — synthesizes a package from locally supplied declaration content, for API Extractor output and hand-written ambient types.
 - `RegistryEvent` and `RegistryObserver` — an opt-in, zero-cost progress channel; the library logs nothing on its own.
 - Typed errors throughout: `FetchError`, `PackageNotFoundError`, `VersionNotFoundError`, `TypeCacheError`, `BatchLoadError`, `TsEnvironmentError`.

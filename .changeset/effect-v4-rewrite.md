@@ -21,6 +21,12 @@ implementation. Effect v3 is no longer supported.
   `prefixVfs`), `VirtualPackage`, and `RegistryEvent` / `RegistryObserver`.
   The v3 names `CacheService`, `CacheServiceLive`, `TypeRegistryLive`,
   `TypeResolverLive`, `TypeRegistryObserver`, and `NodeLayer` are gone.
+- **`TsEnvironment.make`'s `compilerOptions` no longer takes
+  `ts.CompilerOptions`.** It now takes tsconfig JSON form via
+  `CompilerOptions.Type` from `@effected/tsconfig-json` — e.g.
+  `{ target: "es2022" }` instead of `{ target: ts.ScriptTarget.ES2022 }` —
+  converted to the compiler's numeric enums internally. Callers no longer need
+  to import `typescript` to build this option.
 - **Services are `Context.Service` classes** with namespaced tag IDs
   (`type-registry-effect/TypeCache`, `/TypeRegistry`, `/PackageFetcher`,
   `/RegistryObserver`), each paired with an exported `*Shape` interface.
@@ -38,20 +44,24 @@ implementation. Effect v3 is no longer supported.
 
 ## Dependencies
 
-| Dependency               | Type           | Action  | From        | To              |
-| ------------------------ | -------------- | ------- | ----------- | --------------- |
-| `effect`                 | peerDependency | updated | ^3.21.4     | 4.0.0-beta.98   |
-| `semver-effect`          | dependency     | removed | ^0.3.1      | —               |
-| `xdg-effect`             | dependency     | removed | ^2.1.1      | —               |
-| `@effected/semver`       | peerDependency | added   | —           | ^0.1.0          |
-| `@effected/store`        | peerDependency | added   | —           | ^0.1.0          |
-| `@effected/xdg`          | peerDependency | added   | —           | ^0.1.3          |
-| `typescript`             | peerDependency | updated | ^7.0.2      | ^6.0.3          |
-| `@effect/platform`       | peerDependency | removed | ^0.96.2     | —               |
-| `@effect/sql`            | peerDependency | removed | ^0.51.1     | —               |
-| `@effect/sql-sqlite-node`| peerDependency | removed | ^0.52.0     | —               |
-| `@effect/platform-node`  | peerDependency | updated | ^0.107.0    | 4.0.0-beta.98   |
+| Dependency                | Type           | Action  | From     | To            |
+| ------------------------- | -------------- | ------- | -------- | ------------- |
+| `effect`                  | peerDependency | updated | ^3.21.4  | 4.0.0-beta.98 |
+| `semver-effect`           | dependency     | removed | ^0.3.1   | —             |
+| `xdg-effect`              | dependency     | removed | ^2.1.1   | —             |
+| `@effected/semver`        | peerDependency | added   | —        | ^0.1.0        |
+| `@effected/store`         | peerDependency | added   | —        | ^0.1.0        |
+| `@effected/tsconfig-json` | peerDependency | added   | —        | ^0.2.3        |
+| `@effected/xdg`           | peerDependency | added   | —        | ^0.1.3        |
+| `typescript`              | peerDependency | updated | ^7.0.2   | ^6.0.3        |
+| `@effect/platform`        | peerDependency | removed | ^0.96.2  | —             |
+| `@effect/sql`             | peerDependency | removed | ^0.51.1  | —             |
+| `@effect/sql-sqlite-node` | peerDependency | removed | ^0.52.0  | —             |
+| `@effect/platform-node`   | peerDependency | updated | ^0.107.0 | 4.0.0-beta.98 |
 
 `typescript` is pinned to `^6.0.3` — tsgo 7.x lacks the compiler API
 `TsEnvironment` needs. `typescript` and `@typescript/vfs` are now optional
 peers: consumers that never call `TsEnvironment` don't need either installed.
+`@effected/tsconfig-json` is a required peer — it supplies the
+`CompilerOptions` type and enum codec `TsEnvironment.make` converts JSON-form
+options with, and has no dependency on `typescript` itself.

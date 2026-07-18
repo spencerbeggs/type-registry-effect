@@ -1,13 +1,22 @@
 import { assert, describe, it } from "@effect/vitest";
+import type { CompilerOptions } from "@effected/tsconfig-json";
 import { Effect } from "effect";
-import * as ts from "typescript";
 import { TsEnvironment, VirtualPackage, mergeVfs } from "../src/index.js";
 
-const compilerOptions: ts.CompilerOptions = {
-	target: ts.ScriptTarget.ES2022,
-	module: ts.ModuleKind.ESNext,
-	moduleResolution: ts.ModuleResolutionKind.Bundler,
+// JSON form — TsEnvironment converts to the compiler's numeric enums itself,
+// so the tests need no compile-time dependency on the typescript package.
+const compilerOptions: CompilerOptions.Type = {
+	target: "es2022",
+	module: "esnext",
+	moduleResolution: "bundler",
 	strict: true,
+};
+
+/** Flatten a `string | DiagnosticMessageChain` without importing typescript. */
+const flattenMessage = (message: unknown): string => {
+	if (typeof message === "string") return message;
+	const chain = message as { readonly messageText: string; readonly next?: ReadonlyArray<unknown> };
+	return [chain.messageText, ...(chain.next ?? []).map(flattenMessage)].join(" ");
 };
 
 describe("TsEnvironment", () => {
@@ -31,7 +40,7 @@ describe("TsEnvironment", () => {
 				...environment.languageService.getSyntacticDiagnostics("/twoslash/sample.ts"),
 			];
 			assert.deepStrictEqual(
-				diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")),
+				diagnostics.map((diagnostic) => flattenMessage(diagnostic.messageText)),
 				[],
 			);
 		}),
@@ -46,10 +55,12 @@ describe("TsEnvironment", () => {
 				'import { answer } from "my-types";\nconst wrong: string = answer;\nexport { wrong };\n',
 			);
 			const diagnostics = environment.languageService.getSemanticDiagnostics("/twoslash/broken.ts");
-			// TS2322: Type 'number' is not assignable to type 'string'.
+			// TS2322: Type 'number' is not assignable to type 'string'. Structural
+			// param types: under the tsgo dev typescript the @typescript/vfs
+			// declarations degrade, so nothing here may lean on inference.
 			assert.isTrue(
-				diagnostics.some((diagnostic) => diagnostic.code === 2322),
-				`expected TS2322 among: ${diagnostics.map((diagnostic) => diagnostic.code).join(", ")}`,
+				diagnostics.some((diagnostic: { readonly code: number }) => diagnostic.code === 2322),
+				`expected TS2322 among: ${diagnostics.map((diagnostic: { readonly code: number }) => diagnostic.code).join(", ")}`,
 			);
 		}),
 	);

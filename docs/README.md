@@ -5,10 +5,10 @@ TypeScript virtual file systems for Effect: fetch, cache and resolve type defini
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/xdg
+npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
 ```
 
-Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed only for `TsEnvironment`.
+Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed at runtime only when you call `TsEnvironment`.
 
 ## Pages
 
