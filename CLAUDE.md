@@ -10,11 +10,13 @@ TypeScript type definitions from npm packages via the jsDelivr CDN. It produces
 virtual file systems (VFS) compatible with @typescript/vfs and Twoslash for
 documentation tooling that needs type-aware code samples.
 
+Built on **Effect v4** (`4.0.0-beta.98`). Do not apply v3 idioms — see Patterns.
+
 ## Design Documentation
 
-- `@./.claude/design/type-registry-effect/architecture.md` — service/layer architecture, service tag patterns, `TypeRegistryObserver`, platform abstraction, layer requirements
-- `@./.claude/design/type-registry-effect/cache-optimization.md` — SQLite metadata store (xdg-effect `SqliteCache`), friendly on-disk tree, TTL/staleness, `prune` vs `remove`
-- `@./.claude/design/type-registry-effect/observability.md` — opt-in `TypeRegistryObserver` / `RegistryEvent` channel (silent by default), metrics, fault tolerance
+- `@./.claude/design/type-registry-effect/architecture.md` — flat module layout, `Context.Service` services and `*Shape` interfaces, `Schema.TaggedErrorClass` error model, edge-wired composition, `TsEnvironment` seam, hardening limits
+- `@./.claude/design/type-registry-effect/cache-optimization.md` — two-plane cache (`@effected/store` `Cache` metadata + on-disk files), `TypeCache.layer` / `layerXdg`, stale-vs-miss ladder, prune vs remove, `Cache.layerTest()` testing
+- `@./.claude/design/type-registry-effect/observability.md` — opt-in `RegistryObserver` / `RegistryEvent` channel (silent by default), 11-variant event catalogue, `Effect.fn` span tracing, fault tolerance
 
 ## Commands
 
@@ -23,7 +25,8 @@ documentation tooling that needs type-aware code samples.
 ```bash
 pnpm run lint              # Check code with Biome
 pnpm run lint:fix          # Auto-fix lint issues
-pnpm run typecheck         # Type-check via Turbo
+pnpm run lint:md           # Lint markdown
+pnpm run typecheck         # Type-check via Turbo (tsc --noEmit)
 pnpm run test              # Run all tests
 pnpm run test:watch        # Run tests in watch mode
 pnpm run test:coverage     # Run tests with coverage report
@@ -40,73 +43,121 @@ pnpm run build:prod        # Build production/npm output only
 ### Running a Single Test
 
 ```bash
-# Run a specific test file
-pnpm vitest run __test__/TypeRegistry.unit.test.ts
+pnpm vitest run __test__/TypeRegistry.test.ts
 
-# Run integration tests only
-pnpm vitest run __test__/TypeRegistry.integration.test.ts
+# E2E suite hits live jsDelivr and is skipped unless opted in
+TS_VFS_E2E=1 pnpm vitest run __test__/e2e/jsdelivr.e2e.test.ts
 ```
 
 ## Architecture
 
 ### Single-Package Library
 
-- **Source**: `src/` — all library code
-- **Tests**: `__test__/` — mirrors `src/` structure
-- **Build**: Rslib with dual output (`dist/dev/`, `dist/npm/`)
-- **Shared Configs**: `lib/configs/` (Biome, commitlint, lint-staged, etc.)
+- **Source**: `src/` — flat module layout, one public concern per file
+- **Tests**: `__test__/` — one test file per `src/` module
+- **Build**: `@savvy-web/bundler` via `savvy.build.ts`, dual output
+  (`dist/dev/`, `dist/npm/`); publishes from `dist/dev/pkg`
+- **Shared Configs**: `lib/configs/` (commitlint, lint-staged)
 
 ### Key Modules
 
-- `src/TypeRegistry.ts` — namespace module with composable Effect programs
-- `src/VirtualPackage.ts` — synthetic type packages from local declarations
-- `src/services/` — service interfaces (`CacheService`, `PackageFetcher`, `TypeResolver`, `TypeRegistryObserver`); most use `Context.GenericTag` with interface/const merging
-- `src/layers/` — live implementations (`CacheServiceLive`,
-  `PackageFetcherLive`, `TypeResolverLive`, `TypeRegistryLive`)
-- `src/schemas/` — Effect Schema types (`PackageSpec`, `CacheMetadata`,
-  `PackageJson`, `FileTree`, `ResolvedModule`)
-- `src/errors/` — `Data.TaggedError` types with `*Base` exports for DTS
-  bundling
-- `src/platforms/node.ts` — `NodeLayer` and Promise convenience wrappers
+- `src/TypeRegistry.ts` — `TypeRegistry` service, the facade over cache +
+  fetcher (`getVfs`, `getPackageVfs`, `fetchAndCache`, `resolveVersion`,
+  `clearCache`)
+- `src/TypeCache.ts` — `TypeCache` service, two-plane cache with
+  `layer({ cacheDir })` and `layerXdg({ namespace })` statics
+- `src/PackageFetcher.ts` — `PackageFetcher` service, jsDelivr-backed; requires
+  `HttpClient`
+- `src/RegistryEvent.ts` — `RegistryEvent` schema union + `RegistryObserver`
+  service with `layerCallback`
+- `src/TypeResolver.ts` — static resolution helpers over `PackageManifest`
+- `src/TsEnvironment.ts` — the only module touching the optional `typescript` /
+  `@typescript/vfs` peers, loaded lazily inside `TsEnvironment.make`
+- `src/PackageSpec.ts`, `src/Vfs.ts`, `src/VirtualPackage.ts` — domain types and
+  VFS helpers (`mergeVfs`, `prefixVfs`)
+- `src/internal/` — non-public: `jsdelivr.ts` (URLs, response schemas),
+  `resolution.ts` (path/exports logic), `limits.ts` (hardening constants)
 
 ### Entry Points
 
-- `type-registry-effect` (`src/index.ts`) — platform-agnostic Effect programs
-- `type-registry-effect/node` (`src/node.ts`) — Node.js layer + Promise API
+Exports are `.` (`src/index.ts`) and `./package.json` only. There is **no**
+`./node` entry point — consumers wire platform layers at the edge.
 
 ### Patterns
 
-- Services use `Context.GenericTag` with interface/const declaration merging to avoid `_base` forgotten exports in DTS bundling. Exception: `TypeRegistryObserver` uses `Context.Tag` (it carries no DTS-bundled `*Base` value)
-- `CacheMetadata` uses `Schema.Struct` with manual interface (not
-  `Schema.Class`) for the same reason
-- Error types use `Data.TaggedError` with exported `*Base` constants
-- `src/index.ts` re-exports `TypeRegistry` and `VirtualPackage` via `export * as X` — NEVER hand-written `export namespace X { export import ... }` aliases. The DTS bundler does not track `import =` alias references: it tree-shakes the target module away and leaves the aliases dangling against a namespace that is never declared, publishing broken typings (the 1.0.1 regression). `export * as` synthesizes a self-contained `X_d_exports` wrapper with all member declarations and TSDoc inlined; the wrapper cannot carry a release tag, so `ae-missing-release-tag` is suppressed by pattern `"_d_exports"` in `savvy.build.ts`
-- Platform deps (`FileSystem`, `HttpClient`) resolved within layers, not in
-  service interfaces
-- `JSON.parse` calls wrapped with `Effect.try` for typed `ParseError`
+- **Services**: `Context.Service<Self, Shape>()("type-registry-effect/Name")`
+  class form, paired with an exported `*Shape` interface. Tag IDs are namespaced
+  (`type-registry-effect/TypeCache`, `/TypeRegistry`, `/PackageFetcher`,
+  `/RegistryObserver`). Do NOT reintroduce v3's `Context.GenericTag`
+  interface/const merging.
+- **Errors**: `Schema.TaggedErrorClass<Self>()("Name", { ...fields })`. No
+  `Data.TaggedError`, no `*Base` exports.
+- **Layers**: exposed as statics on the service class (`TypeRegistry.layer`,
+  `PackageFetcher.layer`, `TypeCache.layer`/`layerXdg`). Parameterized factories
+  return a fresh layer per call — bind to a `const` and provide that, or two
+  provide sites mint two caches.
+- **Composition happens at the edge**: this package never builds
+  `FileSystem`/`Path`/`HttpClient`/`Cache` layers. Consumers provide them (see
+  `__test__/e2e/jsdelivr.e2e.test.ts` for the canonical wiring).
+- **index.ts uses flat named re-exports** — no `export * as X` namespace
+  wrappers. `savvy.build.ts` suppresses only `ae-forgotten-export` for the
+  `_base` pattern (Effect's synthesized intermediate classes); the former
+  `_d_exports` suppression is gone and should not return.
+- **Tracing**: service methods are defined with `Effect.fn("Module.method")`;
+  keep new methods consistent.
+- `JSON.parse` and other throwing calls wrapped with `Effect.try` for typed
+  failures.
+
+### Effect v4 Source Authority
+
+`.repos/effect-smol` is a read-only sparse submodule pinned to
+`effect@4.0.0-beta.98` (manifest: `.repos/config.json`). Consult it — including
+`MIGRATION.md` and `migration/` — to confirm what v4 actually exports before
+guessing or porting v3 idioms. Never edit it.
+
+### Dependencies
+
+- `effect` and `@effect/platform-node` come from the `effect` / `effectPeers`
+  pnpm catalogs
+- `@effected/semver`, `@effected/store`, `@effected/xdg` (replaced v3's
+  `semver-effect` / `xdg-effect`)
+- `@effected/tsconfig-json` (dev + peer) supplies `CompilerOptions` and
+  `TsEnumCodec`. `TsEnvironmentOptions.compilerOptions` is `CompilerOptions.Type`
+  — tsconfig JSON form (`{ target: "es2022" }`), converted to the compiler's
+  numeric enums internally via `TsEnumCodec.encodeCompilerOptions`. `src/` and
+  `__test__/` have **no** compile-time dependency on the `typescript` package.
+- Dev `typescript` is `catalog:silk` (7.0.2, native tsc) — what `types:check`
+  runs. TS 7 ships no JS compiler API, so the classic compiler arrives as the
+  dev-only npm alias `typescript-classic` (`npm:typescript@^6.0.3`), wired into
+  tests by vitest `resolve.alias` (`typescript` → `typescript-classic`).
+- The `typescript` **peer** stays `^6.0.3` and optional — runtime-only, for
+  consumers calling `TsEnvironment.make`. `@typescript/vfs` is also an
+  **optional** peer.
 
 ### Code Quality
 
 - **Biome**: Unified linting and formatting
 - **Commitlint**: Enforces conventional commits with DCO signoff
-- **Husky Hooks**:
-  - `pre-commit`: Runs lint-staged
-  - `commit-msg`: Validates commit message format
-  - `pre-push`: Runs tests for affected files
+- **Husky Hooks**: `pre-commit` (lint-staged), `commit-msg` (commitlint)
 
 ### TypeScript Configuration
 
-- Composite builds with project references
-- Strict mode enabled
-- ES2022/ES2023 targets
+- Extends `@savvy-web/bundler/tsconfig/ecma.json`
+- Composite + incremental, strict, `exactOptionalPropertyTypes`,
+  `verbatimModuleSyntax`
+- Target ES2025, `module`/`moduleResolution` nodenext
 - Import extensions required (`.js` for ESM)
 
 ### Testing
 
-- **Framework**: Vitest with v8 coverage
+- **Framework**: Vitest with `@effect/vitest` and `@vitest-agent/plugin`
 - **Pool**: Uses forks (not threads) for Effect-TS compatibility
-- **Config**: `vitest.config.ts` with coverage thresholds (80% lines/statements,
-  70% functions, 60% branches)
+- **Coverage**: v8 provider; thresholds come from
+  `AgentPlugin.COVERAGE_LEVELS.standard`, `coverageTargets` from `strict` (see
+  `vitest.config.ts`)
+- **E2E**: `__test__/e2e/` gated behind `TS_VFS_E2E=1`; hits live jsDelivr
+- Swap the metadata plane with `Cache.layerTest()` instead of touching a real
+  database file
 
 ## Conventions
 

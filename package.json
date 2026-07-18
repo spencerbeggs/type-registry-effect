@@ -2,7 +2,8 @@
 	"name": "type-registry-effect",
 	"version": "1.1.0",
 	"private": true,
-	"description": "Fetch, cache, and resolve TypeScript type definitions from npm packages for use with Twoslash and documentation tooling. Built on Effect.",
+	"description": "TypeScript virtual file systems for Effect: fetch, cache and resolve type definitions from npm via the jsDelivr CDN, and build @typescript/vfs environments for Twoslash-style documentation tooling.",
+	"keywords": ["typescript", "vfs", "twoslash", "types", "jsdelivr", "cache", "effect"],
 	"homepage": "https://github.com/spencerbeggs/type-registry-effect#readme",
 	"bugs": {
 		"url": "https://github.com/spencerbeggs/type-registry-effect/issues"
@@ -21,7 +22,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
-		"./node": "./src/node.ts"
+		"./package.json": "./package.json"
 	},
 	"scripts": {
 		"build": "turbo run build:dev build:prod --log-order=grouped --log-prefix=none",
@@ -41,34 +42,39 @@
 		"typecheck": "turbo run types:check --log-prefix=none --log-order=grouped",
 		"types:check": "tsc --noEmit"
 	},
-	"dependencies": {
-		"semver-effect": "^0.3.1",
-		"xdg-effect": "^2.1.1"
-	},
 	"devDependencies": {
-		"@effect/cluster": "catalog:silk",
-		"@effect/experimental": "catalog:silk",
-		"@effect/platform": "catalog:silk",
-		"@effect/platform-node": "catalog:silk",
-		"@effect/rpc": "catalog:silk",
-		"@effect/sql": "catalog:silk",
-		"@effect/sql-sqlite-node": "catalog:silk",
-		"@savvy-web/bundler": "^1.1.14",
-		"@savvy-web/silk": "^2.5.0",
+		"@effect/platform-node": "catalog:effect",
+		"@effect/vitest": "catalog:effect",
+		"@effected/semver": "^0.1.0",
+		"@effected/store": "^0.1.0",
+		"@effected/tsconfig-json": "^0.2.3",
+		"@effected/xdg": "^0.1.3",
+		"@savvy-web/bundler": "^2.0.3",
+		"@savvy-web/silk": "^3.0.3",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^1.1.9",
-		"effect": "catalog:silk",
-		"typescript": "catalog:silk"
+		"@vitest-agent/plugin": "^2.0.1",
+		"effect": "catalog:effect",
+		"typescript": "catalog:silk",
+		"typescript-classic": "npm:typescript@^6.0.3"
 	},
 	"peerDependencies": {
-		"@effect/platform": "catalog:silkPeers",
-		"@effect/platform-node": "catalog:silkPeers",
-		"@effect/sql": "catalog:silkPeers",
-		"@effect/sql-sqlite-node": "catalog:silkPeers",
+		"@effect/platform-node": "catalog:effectPeers",
+		"@effected/semver": "^0.1.0",
+		"@effected/store": "^0.1.0",
+		"@effected/tsconfig-json": "^0.2.3",
+		"@effected/xdg": "^0.1.3",
 		"@typescript/vfs": "^1.6.4",
-		"effect": "catalog:silkPeers",
-		"typescript": "catalog:silkPeers"
+		"effect": "catalog:effectPeers",
+		"typescript": "^6.0.3"
+	},
+	"peerDependenciesMeta": {
+		"@typescript/vfs": {
+			"optional": true
+		},
+		"typescript": {
+			"optional": true
+		}
 	},
 	"packageManager": "pnpm@11.15.0+sha512.266f8957a30d2be6e9468e5e66bcdedd35a794175f71b067ba8504d686cce1d0c0f429b33c323c3c569ad4891e667574a49ff71d1b89a22cc66f13c65818c578",
 	"engines": {

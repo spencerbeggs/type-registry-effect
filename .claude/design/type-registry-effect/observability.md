@@ -3,9 +3,9 @@ status: current
 module: type-registry-effect
 category: observability
 created: 2026-01-17
-updated: 2026-06-19
-last-synced: 2026-06-19
-completeness: 95
+updated: 2026-07-18
+last-synced: 2026-07-18
+completeness: 90
 related:
   - ./architecture.md
   - ./cache-optimization.md
@@ -20,48 +20,101 @@ dependencies: []
 2. [Current State](#current-state)
 3. [Rationale](#rationale)
 4. [Typed event channel](#typed-event-channel)
-5. [Metrics and telemetry](#metrics-and-telemetry)
-6. [Fault tolerance](#fault-tolerance)
-7. [Related documentation](#related-documentation)
+5. [The event catalogue](#the-event-catalogue)
+6. [Tracing](#tracing)
+7. [Fault tolerance](#fault-tolerance)
+8. [Related documentation](#related-documentation)
 
 ---
 
 ## Overview
 
-The library exposes three independent diagnostics surfaces. None of them are coupled to each other, and the library is **silent by default** -- it emits no `Effect.log` output. A consumer opts into whichever surface fits their need:
+The library is **silent by default**: it performs no `Effect.log` of its own and emits nothing unless asked.
+Three independent surfaces are available, and none is coupled to another:
 
-1. **Typed event channel** (`TypeRegistryObserver` / `RegistryEvent`) -- the primary, programmatic surface. Opt-in, zero-cost when unused.
-2. **Effect Metrics** (`src/metrics.ts`) -- aggregate counters and timer histograms, always tracked, read or exported on demand.
-3. **Typed errors** (`Data.TaggedError`) -- per-failure recovery via `catchTag` / `catchTags` (see `architecture.md`).
+1. **Typed event channel** (`RegistryObserver` / `RegistryEvent`) — the programmatic progress surface. Opt-in
+   and zero-cost when unused.
+2. **Tracing spans** — every public operation runs inside a named span, so a host that installs a tracer gets
+   the topology for free.
+3. **Typed errors** — per-failure recovery on structured fields via `catchTag` / `catchTags`
+   (see `architecture.md`).
 
-Events are emitted **only** from `src/TypeRegistry.ts`, with the single exception of the `FetchFailed` event emitted from `src/layers/PackageFetcherLive.ts`. The service layers (`CacheService`, `PackageFetcher`, `TypeResolver`) remain logging-free in their core operations, keeping business logic independently testable.
+Events are emitted from `src/TypeRegistry.ts`, with one exception: `FetchFailed` is emitted from
+`src/PackageFetcher.ts`, where the HTTP status is actually observed. `TypeCache` and `TypeResolver` emit
+nothing, which keeps their operations independently testable.
 
 ---
 
 ## Current State
 
-The typed event channel and Effect Metrics are both implemented and active. The legacy `Effect.log` + `LogEventSchema` annotation system has been removed as the diagnostics surface; `LogEventSchema` / `LogEvent` remain exported but `@deprecated`. Fault tolerance covers HTTP retry, request timeouts, fail-fast on non-2xx responses and graceful per-package degradation (see [Fault tolerance](#fault-tolerance)). Distributed tracing, circuit breaking and rate limiting are not yet implemented.
+- `RegistryEvent` is a `Schema.Union` of eleven `Schema.TaggedStruct` variants (`src/RegistryEvent.ts`).
+- `RegistryObserver` is a `Context.Service` with a single `emit` method, plus `layerCallback` and `layerNoop`
+  statics.
+- The internal `emit` helper resolves the observer via `Effect.serviceOption` and no-ops on absence.
+- Spans wrap every public operation via `Effect.fn("<Service>.<method>")` and `Effect.withSpan`.
+- Fault tolerance covers HTTP retry, request timeouts, fail-fast on non-2xx, materialization budgets and
+  best-effort batch degradation.
+
+Changed in the v4 rewrite:
+
+- **The Effect Metrics module is gone.** `src/metrics.ts` and its counters/histograms were deleted. Everything
+  a metric carried is present on the event stream as typed fields (`duration` on `PackageLoaded` and
+  `BatchComplete`, `source` on `PackageLoaded`, counts on `BatchComplete`), so a host that wants metrics
+  derives them in its observer against its own registry rather than accumulating in this library's.
+- **The deprecated log-annotation surface is gone.** `src/events.ts`, `LogEventSchema` and `LogEvent` are
+  deleted outright rather than kept `@deprecated`.
+- `RegistryEvent` moved from a `Data.TaggedEnum` to a `Schema.Union`, so there are no `$is` / `$match`
+  combinators — narrow with `switch (event._tag)` or `Match`.
+- The service was renamed `TypeRegistryObserver` → `RegistryObserver`, tag id
+  `type-registry-effect/RegistryObserver`.
+
+Not implemented: circuit breaking, rate limiting, adaptive timeouts, request deduplication, a health-check
+surface.
 
 ---
 
 ## Rationale
 
-Earlier versions emitted human-readable diagnostics via `Effect.log` + `Effect.annotateLogs`, intercepted through a custom Logger layer. That surface stringifies every value (a count arrived as a string) and forces consumers to parse log annotations to react programmatically. The typed channel keeps numbers as numbers and gives consumers a discriminated union instead of a string-keyed map. Making it opt-in via `Effect.serviceOption` means the library stays silent and zero-cost by default while still offering a first-class programmatic surface to hosts that want one.
+### Why opt-in and zero-cost
+
+`emit` resolves the observer through `Effect.serviceOption`, which is the crux of the design:
+
+- It adds **no requirement** to any signature. A function that emits events still advertises only the services
+  it genuinely depends on (`TypeCache`, `PackageFetcher`). The observer never leaks into a public effect type.
+- Providing nothing is the default and is a genuine no-op. Consumers who do not care pay nothing and configure
+  nothing.
+
+### Why typed events instead of logs
+
+Earlier versions emitted human-readable diagnostics via `Effect.log` + `Effect.annotateLogs`, intercepted by a
+custom Logger layer. That surface stringifies every value — a count arrived as a string — and forces consumers
+to parse annotations to react programmatically. A discriminated union keeps numbers as numbers, `Duration` as
+`Duration`, and the failing error as the error itself.
+
+### Why schema-backed
+
+Events cross the library/host boundary and hosts ship them to telemetry, so they are `Schema`-backed (following
+the store `CacheEventPayload` precedent) and can be encoded without a bespoke serializer.
+
+### Why a push callback rather than a PubSub
+
+These events are progress reporting for a host UI. A callback has no subscription lifecycle and no `Scope`, so
+it is usable from non-Effect hosts. (`@effected/store`'s `Cache` exposes a `PubSub` instead because its events
+are intrinsic to an eviction-bearing store. The two postures are deliberate and should not be unified.)
+
+### Why no metrics module
+
+An always-on metrics registry inside a library is a policy decision imposed on the host: it fixes metric names,
+units and cardinality, and it accumulates whether or not anyone reads it. Every quantity the old module tracked
+is already a typed field on an event, so a host that wants counters writes three lines in its observer and owns
+the naming.
 
 ---
 
 ## Typed event channel
 
-See `src/services/TypeRegistryObserver.ts` for the service, the `RegistryEvent` tagged-enum variants and the helper layers.
-
-### The load-bearing decision: opt-in and zero-cost
-
-Internal call sites emit through `emitEvent`, which resolves the observer via `Effect.serviceOption`. This is the crux of the design:
-
-- `emitEvent` adds **no requirement** to a program's type signature. A function that emits events still advertises only the services it genuinely depends on (`CacheService`, `PackageFetcher`, and so on). The observer never leaks into public effect signatures.
-- When no observer layer is provided it is a **no-op** -- the default. Consumers who do not care pay nothing and configure nothing.
-
-A consumer opts in by providing a `TypeRegistryObserver` layer. The service shape is deliberately minimal -- a single `emit` the host implements -- so it can be backed by a callback, a `PubSub`, a `Stream` sink, a logger, metrics, whatever the host prefers.
+The service shape is deliberately minimal — a single `emit` the host implements — so it can be backed by a
+callback, a `PubSub`, a `Stream` sink, a logger, metrics, whatever the host prefers:
 
 ```typescript
 readonly emit: (event: RegistryEvent) => Effect.Effect<void>;
@@ -69,64 +122,83 @@ readonly emit: (event: RegistryEvent) => Effect.Effect<void>;
 
 ### Helper layers
 
-- `layerCallback(onEvent)` -- the lowest-friction subscription: a plain callback, no `PubSub`/`Stream`/`Scope` ceremony and no Effect knowledge required.
-- `layerNoop` -- explicit "events are intentionally dropped"; equivalent to providing nothing, but visible in tests.
-
-`RegistryEvent` is a `Data.TaggedEnum`, so consumers get constructors plus `$is` / `$match` for exhaustive, string-free handling.
+- `RegistryObserver.layerCallback(onEvent)` — the lowest-friction bridge: a plain callback, no `PubSub` /
+  `Stream` / `Scope` ceremony and no Effect knowledge required. A throwing callback is a programmer bug and
+  stays a defect; it is not laundered into a typed error channel.
+- `RegistryObserver.layerNoop` — explicit "events are intentionally dropped". Equivalent to providing nothing,
+  but visible in a composition.
 
 ```typescript
-import { Effect } from "effect";
-import { TypeRegistry, PackageSpec } from "type-registry-effect";
-import { layerCallback, RegistryEvent } from "type-registry-effect";
-import { NodeLayer } from "type-registry-effect/node";
+import { Effect, Layer } from "effect";
+import { PackageSpec, RegistryObserver, TypeRegistry } from "type-registry-effect";
 
-const observer = layerCallback((e) =>
-  RegistryEvent.$match(e, {
-    BatchComplete: ({ loaded, total }) => report.summary(loaded, total),
-    PackageLoadFailed: ({ package: p, kind }) => report.fail(p, kind),
-    _: () => {},
-  }),
-);
+const ObserverLayer = RegistryObserver.layerCallback((event) => {
+  switch (event._tag) {
+    case "BatchComplete":
+      report.summary(event.loaded, event.total);
+      break;
+    case "PackageLoadFailed":
+      report.fail(event.package, event.kind);
+      break;
+    default:
+      break;
+  }
+});
 
-const program = TypeRegistry.getVFS([
-  new PackageSpec({ name: "zod", version: "3.23.8" }),
-]);
-
-await Effect.runPromise(
-  program.pipe(Effect.provide(observer), Effect.provide(NodeLayer)),
-);
+const program = Effect.gen(function* () {
+  const registry = yield* TypeRegistry;
+  return yield* registry.getVfs([PackageSpec.fromString("zod@3.23.8")]);
+}).pipe(Effect.provide(Layer.mergeAll(AppLayer, ObserverLayer)));
 ```
-
-### Deprecated log-annotation surface
-
-The old annotation schema (`LogEventSchema` / `LogEvent` in `src/events.ts`) is now `@deprecated`. It is still exported for backward compatibility; removal is deferred to a future major release. The library no longer emits those log annotations. See [Rationale](#rationale) for why it was replaced.
 
 ---
 
-## Metrics and telemetry
+## The event catalogue
 
-`src/metrics.ts` defines all metrics with `effect/Metric`, exported as named constants and incremented or tracked directly in `src/TypeRegistry.ts`. See those files for the exact metric names; the topology is:
+| Tag | Fields | Emitted from |
+| --- | --- | --- |
+| `VersionResolved` | `package`, `requested`, `resolved` | `resolveVersion` |
+| `VersionResolveFailed` | `package`, `requested`, `kind` (`not-found` \| `no-match` \| `network`) | `resolveVersion` |
+| `CacheHit` | `package`, `version`, `age` (`Duration`) | `getPackageVfs` |
+| `CacheStale` | `package`, `version` | `getPackageVfs` |
+| `CacheMiss` | `package`, `version` | `getPackageVfs` |
+| `FetchStart` | `package`, `version` | `fetchAndCache` |
+| `FetchFailed` | `url`, `status`, `bodySnippet` | `PackageFetcher.fetchOk` |
+| `PackageLoaded` | `package`, `version`, `files`, `source` (`cache` \| `network`), `duration` | `getPackageVfs` |
+| `PackageLoadFailed` | `package`, `version`, `kind`, `error` | `getVfs` per-package catch |
+| `BatchStart` | `total`, `packages` | `getVfs` |
+| `BatchComplete` | `loaded`, `failed`, `total`, `totalFiles`, `duration` | `getVfs` |
 
-- **Counters:** cache hits, misses and stale entries (from `getPackageVFS`); packages loaded (from `getPackageVFS`); packages failed (from `getVFS`'s per-package catch).
-- **Timer histograms:** per-package load duration (`getPackageVFS`) and batch duration (`getVFS`), both via `Metric.trackDuration`.
+`PackageLoadFailed.error` is the typed error itself, preserved structurally as `Schema.Defect()` — a host can
+inspect it rather than relying only on `kind`.
 
-Metrics accumulate in the Effect Metrics registry and are read via `Metric.value` or exported to any OpenTelemetry-compatible sink.
+### Classification
 
-```typescript
-import { Effect, Metric } from "effect";
-import { TypeRegistry, PackageSpec } from "type-registry-effect";
-import { NodeLayer } from "type-registry-effect/node";
-import { cacheHits, cacheMisses } from "type-registry-effect";
+`classify` in `src/TypeRegistry.ts` maps a per-package failure to a stable `PackageLoadFailed.kind` (`not-found`,
+`version-range`, `schema`, `network`, `cache`, `unknown`) from **typed error tags and structured fields only**:
+`FetchError` splits on its `status === 404` and `kind === "schema"` fields, and everything else branches on
+`_tag`. v3's `classifyLoadError` did substring matching over stringified errors; that is dead, and no event
+`kind` depends on message text. `VersionResolveFailed.kind` is derived the same way.
 
-const program = Effect.gen(function* () {
-  yield* TypeRegistry.getVFS([
-    new PackageSpec({ name: "zod", version: "3.23.8" }),
-  ]);
-  const hits = yield* Metric.value(cacheHits);
-  const misses = yield* Metric.value(cacheMisses);
-  console.log({ hits: hits.count, misses: misses.count });
-}).pipe(Effect.provide(NodeLayer));
-```
+---
+
+## Tracing
+
+Every public operation is wrapped in a named span, so the call topology is available to any host that installs
+a tracer — no configuration in this library:
+
+- `TypeRegistry.*` — `hasCached`, `fetchAndCache`, `getPackageVfs`, `getVfs`, `resolveImport`,
+  `getTypeEntries`, `resolveVersion`, `clearCache`, `pruneCache`
+- `TypeCache.*` — `exists`, `read`, `write`, `listFiles`, `readMetadata`, `writeMetadata`, `getVfs`, `remove`,
+  `prune`
+- `PackageFetcher.*` — `getVersions`, `getFileTree`, `downloadFile`, `getPackageJson`, `getTypeFiles`
+- `TsEnvironment.make`, `VirtualPackage.fromFile`
+
+Most are declared with `Effect.fn("<name>")`, which names the span and preserves the call-site stack trace;
+the few non-function values (`pruneCache`, `TypeCache.prune`) use `Effect.withSpan`.
+
+This replaces the "distributed tracing — planned" item from the v3 design: spans exist throughout, and
+exporting them is the host's `Tracer` choice.
 
 ---
 
@@ -134,28 +206,45 @@ const program = Effect.gen(function* () {
 
 ### Implemented
 
-- **HTTP retry with exponential back-off** in `PackageFetcherLive` (`Schedule.exponential` from 100 ms, composed with `recurs(3)`), plus a 30 s request timeout. Transport and timeout errors are retried.
-- **Fail-fast on non-2xx responses.** `fetchOk` checks the HTTP status before parsing the body. Previously a 404's plain-text body (jsDelivr returns e.g. `Couldn't find version …`) was fed into `res.json` and surfaced as an opaque "JSON parse failed". Now a non-2xx response is **not** retried (it is not transient): the fetcher emits a `FetchFailed` event carrying `url`, `status` and a body snippet, and fails with a `NetworkError` that now carries the HTTP `status`.
-- **Error classification.** `classifyLoadError` in `src/TypeRegistry.ts` maps a per-package failure to a stable `PackageLoadFailed.kind` (`not-found`, `version-range`, `schema`, `json`, `network`, `unknown`) so consumers react without parsing error strings.
-- **Graceful degradation.** `getVFS` loads packages concurrently (limit 5), catches per-package failures, emits `PackageLoadFailed` for each and returns the merged VFS of the survivors. It fails only when **every** package fails. See `src/TypeRegistry.ts`.
+- **Retry with exponential back-off.** `PackageFetcher` retries up to 3 times on a `Schedule.exponential` from
+  100 ms, gated by `isTransient` — transport errors and timeouts only. Non-2xx responses are not transient and
+  are never retried.
+- **Request timeout.** 30 s per request, before the retry gate.
+- **Fail fast on non-2xx.** `fetchOk` checks the status before touching the body. jsDelivr returns plain-text
+  error bodies (`Couldn't find version …`) that would otherwise reach the JSON decoder and surface as an opaque
+  schema failure. Instead the fetcher emits `FetchFailed` with the status and a 200-character body snippet and
+  fails with a typed `FetchError` (`kind: "status"`). If reading the diagnostic body itself fails, that read
+  failure is carried as the `cause` rather than pretending the body was empty.
+- **Materialization budgets.** `getTypeFiles` caps declaration files per package (5,000) and total downloaded
+  bytes (64 MiB), pre-checking the file tree's declared sizes before any download and then accounting actual
+  UTF-8 bytes as bodies land. Over budget fails typed (`FetchError`, `kind: "body"`) instead of exhausting
+  memory. See `architecture.md` for the caps and the documented overshoot bound.
+- **Graceful batch degradation.** `getVfs` loads at concurrency 5, catches each per-package failure, emits
+  `PackageLoadFailed`, and returns the merged VFS of the survivors. It fails only when every package fails, and
+  then with a structured `BatchLoadError` carrying each package's typed error.
+- **Mutation serialization.** A semaphore of 1 in `TypeRegistry` serializes `fetchAndCache`, `clearCache` and
+  `pruneCache` so cache mutations cannot interleave into a half-written state. Per-runtime only; see
+  `cache-optimization.md` for the both-planes backstop.
+- **Structural failure preservation.** Every error carries its underlying cause as `Schema.Defect()`, so
+  diagnosis never depends on a message string.
 
 ### Planned
 
 - Circuit breaker and rate limiting for CDN requests.
 - Adaptive timeouts and request deduplication.
-- Distributed tracing via OpenTelemetry spans on the major operations (`fetchAndCache`, package-json/type-file fetch, cache write).
-- Health-check surface.
+- Streaming enforcement of the download byte budget.
+- A health-check surface.
 
 ---
 
 ## Related documentation
 
-- **Architecture:** `./architecture.md` -- service patterns, data layer, public API
-- **Cache optimization:** `./cache-optimization.md` -- on-disk layout, SQLite metadata, TTL and prune
+- **Architecture:** `./architecture.md` — services, error model, hardening, public API
+- **Cache optimization:** `./cache-optimization.md` — two-plane storage, TTL, staleness, prune
 - **Main package README:** `README.md`
 
 ### External resources
 
+- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.98`
 - Effect documentation: <https://effect.website/>
-- Effect Schema: <https://effect.website/docs/schema/introduction>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>

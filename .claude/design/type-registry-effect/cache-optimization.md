@@ -3,18 +3,19 @@ status: current
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-06-19
-last-synced: 2026-06-19
-completeness: 75
+updated: 2026-07-18
+last-synced: 2026-07-18
+completeness: 85
 related:
   - ./architecture.md
   - ./observability.md
 dependencies: []
 ---
 
-# Cache: SQLite metadata and friendly file tree
+# Cache: two-plane storage, native TTL and prune
 
-The disk cache stores type definition files on disk and per-package metadata in a single SQLite database, with native TTL, expiry and prune.
+`TypeCache` stores type definition files on disk and per-package metadata in a SQLite-backed store, with native
+TTL, evict-on-read expiry and bulk prune.
 
 ## Table of Contents
 
@@ -22,97 +23,204 @@ The disk cache stores type definition files on disk and per-package metadata in 
 2. [Current State](#current-state)
 3. [Rationale](#rationale)
 4. [On-disk layout](#on-disk-layout)
-5. [SQLite metadata](#sqlite-metadata)
-6. [Staleness and prune](#staleness-and-prune)
+5. [The metadata plane](#the-metadata-plane)
+6. [The stale-vs-miss ladder](#the-stale-vs-miss-ladder)
 7. [Removal ordering](#removal-ordering)
-8. [Cache directory resolution](#cache-directory-resolution)
-9. [Related documentation](#related-documentation)
+8. [Prune](#prune)
+9. [Cache directory resolution](#cache-directory-resolution)
+10. [Testing the cache](#testing-the-cache)
+11. [Related documentation](#related-documentation)
 
 ---
 
 ## Overview
 
-The cache splits storage across two backends: the bulky type definition payload (`.d.ts` and `package.json` files) lives on disk, and the small per-package metadata (cached-at timestamp, version, optional TTL) lives in an xdg-effect `SqliteCache` -- a single SQLite database with native TTL/expiry, prune and PubSub events. Earlier versions hand-rolled both the metadata sidecars (`.metadata.json` files) and the XDG path logic; both are gone.
+The cache splits storage across two planes:
 
-The implementation lives in `src/layers/CacheServiceLive.ts`. The `CacheService` interface it satisfies is in `src/services/CacheService.ts`.
+- **Files** — the bulky payload (`package.json` plus every `.d.ts`) on disk under
+  `<cacheDir>/<name>/<version>/`.
+- **Metadata** — the small per-package record (`version`, `cachedAt`, optional `ttl`) in `@effected/store`'s
+  `Cache`, a SQLite store with native TTL, expiry and prune.
+
+Both live behind one service, `TypeCache` (`src/TypeCache.ts`). The two planes are queried independently and
+that independence is the design — see [The stale-vs-miss ladder](#the-stale-vs-miss-ladder).
 
 ---
 
 ## Current State
 
-- Files on disk under `<cacheRoot>/<name>/<version>/...`; metadata in one SQLite DB at `<cacheRoot>/metadata.db`.
-- TTL, expiry and prune are native to `SqliteCache`. `readMetadata` returns `Option.none()` when an entry is absent or its TTL has expired (expired entries are evicted on read).
-- `remove` deletes the metadata entry, then the on-disk directory (two explicit steps); `prune` is best-effort by design.
-- VFS output keys are unchanged: `node_modules/<name>/...`, fed directly into an in-memory TypeScript compiler host.
-- The cache root resolves via xdg-effect `AppDirs` for the `type-registry-effect` namespace.
+- Files on disk at `<cacheDir>/<name>/<version>/...`; metadata in an `@effected/store` `Cache`.
+- The package **never builds the store layer**. The consumer provides `Cache.layerSqlite` (or `layerTest`),
+  which is what makes the metadata plane swappable without touching this package.
+- TTL is forwarded to the store's native expiry, so `readMetadata` returns `Option.none()` when an entry is
+  absent **or expired** (expiry evicts on read). That `None` is the staleness signal.
+- `remove` deletes metadata first, then the directory. `prune` is deliberately best-effort and not
+  transactional.
+- VFS keys are `node_modules/<name>/<relative-path>` regardless of the on-disk layout.
+- Every operation is a span (`TypeCache.<method>`) and every failure is a typed `TypeCacheError` carrying
+  `operation`, `path` and a structural `cause`.
+
+Changed in the v4 rewrite: the metadata store moved from `xdg-effect`'s `SqliteCache` to `@effected/store`'s
+`Cache`, cache-root resolution moved from `xdg-effect` `AppDirs` to `@effected/xdg` `AppDirs`, and the layer is
+now a parameterized static on the service class rather than a `makeNodeCacheLayer` free function.
 
 ---
 
 ## Rationale
 
-### Why move metadata into SQLite
+### Why two planes at all
 
-The previous `.metadata.json` sidecars meant every freshness check and every TTL decision was a filesystem stat plus a JSON read, and there was no way to ask "which entries have expired?" without walking the whole tree. `SqliteCache` gives native TTL/expiry semantics and a single `prune` query, so freshness and eviction become database operations rather than directory crawls. It also offers PubSub events for cache changes, available to hosts that want them.
+Freshness is a question about a small record; the payload is megabytes of declarations. Keeping metadata in a
+queryable store means "is this entry live?" and "which entries have expired?" are database operations rather
+than filesystem stats and directory crawls. Keeping files on disk means the payload is served by the OS page
+cache and is inspectable by a human.
 
-### Why the friendlier directory tree
+### Why the store owns TTL
 
-The new layout makes the version its own directory level (`<name>/<version>/...`) instead of encoding it into the package directory name. Scoped packages then nest naturally (`@scope/name/version/…`) and unscoped packages sit flat (`name/version/…`). This keeps the on-disk tree human-readable and makes the cache key derivation a direct mirror of the path.
+Delegating TTL to the store gives evict-on-read expiry and a single bulk `prune()` for free, instead of
+hand-rolled `.metadata.json` sidecars where every freshness check was a stat plus a JSON read. It also means
+expiry semantics are the store's tested behaviour, not this package's.
+
+### Why the consumer builds the store layer
+
+`Cache.layerSqlite` needs its database directory to exist and carries its own configuration. Owning it here
+would force one database location on every consumer and make the test path awkward. Exposing `Cache` as a layer
+requirement lets a test provide `Cache.layerTest()` (`:memory:`) and a host point the store wherever it wants.
+
+### Why the directory tree looks the way it does
+
+The version is its own directory level (`<name>/<version>/…`) rather than encoded into the package directory
+name, so scoped packages nest naturally and the cache key is a direct mirror of the path. The tree stays
+human-readable.
 
 ---
 
 ## On-disk layout
 
 ```text
-<cacheRoot>/
-  metadata.db                       # SQLite metadata store
+<cacheDir>/
   zod/3.23.8/...                    # unscoped: name/version/…
   @effect/schema/1.0.0/...          # scoped: @scope/name/version/…
 ```
 
-VFS keys remain `node_modules/<name>/<relative-path>` regardless of the on-disk layout -- the disk tree is an implementation detail the VFS hides.
+`TypeCache.write` rejects any `filePath` that is absolute or contains `..` **before** any join
+(`isSafeRelativePath`, `src/internal/resolution.ts`), failing with a typed `TypeCacheError`. The paths written
+here come from a CDN file tree, so a hostile tree must not be able to write outside
+`<cacheDir>/<name>/<version>/`. `PackageSpec`'s own field patterns close the same hole for `name` and `version`.
+
+Directory listing (`listFiles`, `getVfs`) walks recursively under `MAX_NESTING_DEPTH`; a tree deeper than the
+cap fails typed rather than recursing without bound.
+
+`getVfs` reads every cached file and keys it `node_modules/<name>/<path>`, normalizing backslashes. The disk
+tree is an implementation detail the VFS hides.
 
 ---
 
-## SQLite metadata
+## The metadata plane
 
-Metadata keys are colon-delimited, mirroring the directory layout: scoped packages become `@scope:name:version` (e.g. `@effect:schema:1.0.0`) and unscoped become `name:version` (e.g. `xdg-effect:1.0.0`). See `keyOf` and its inverse `keyToPackage` in `src/layers/CacheServiceLive.ts`.
+The key is `PackageSpec.cacheKey`: colon-delimited, `@scope:name:version` for scoped packages and
+`name:version` otherwise. `PackageSpec.parseCacheKey` is the inverse and returns `Option.none()` for anything
+mis-shaped — the store may hold keys this package never wrote, so a bad key is data, not a defect.
 
-The metadata value is the `CacheMetadata` schema (`src/schemas/CacheMetadata.ts`) encoded as JSON. When a TTL is present it is applied as the SQLite entry's native expiry, so the entry participates in `prune` automatically.
+The value is `TypeCacheMetadata` (`version`, `cachedAt` as `DateTimeUtcFromString`, optional `ttl` as
+`DurationFromMillis`) encoded via `Schema.fromJsonString`, stored as UTF-8 bytes with
+`contentType: "application/json"` and tagged with the package name. When `ttl` is present it is also passed to
+the store's native `ttl`, so the entry participates in expiry and prune automatically. An absent `ttl` means the
+entry never expires and is never pruned.
+
+The key scheme mirrors v3's layout, but there is no compat contract with databases written by earlier versions
+— nothing was published.
 
 ---
 
-## Staleness and prune
+## The stale-vs-miss ladder
 
-Freshness is decided in `getPackageVFS` (`src/TypeRegistry.ts`) from two signals -- a live metadata entry and the presence of the on-disk directory:
+`TypeRegistry.getPackageVfs` decides freshness from **two independent signals**: `readMetadata` (live metadata?)
+and `exists` (files on disk?).
 
-- **Live metadata present** -> cache hit.
-- **Metadata `None` but on-disk directory present** -> stale (TTL expired and evicted, but the files remain). With `autoFetch` the package is refetched; otherwise the on-disk files are served as-is.
-- **Nothing present** -> miss.
+| Metadata | Files | Outcome |
+| --- | --- | --- |
+| Some | present | **Hit.** Emits `CacheHit` with the entry's age. |
+| None | present | **Stale.** Emits `CacheStale`. Refetched when `autoFetch`, else served from disk as-is. |
+| Some | absent | Treated as a **miss** — see below. |
+| None | absent | **Miss.** Emits `CacheMiss`. Fetched when `autoFetch`, else fails `PackageNotFoundError`. |
 
-`pruneCache()` (public program) evicts every expired metadata entry and deletes each one's on-disk directory, returning a `CachePruneResult` (`{ count, removed }`). Packages cached without a TTL never expire and are never pruned.
+Two details are load-bearing:
+
+- **A hit requires both planes.** Live metadata whose files are gone is an external deletion; serving it would
+  make `getVfs` return an empty plane. Requiring both makes that case a miss and self-heals.
+- **`exists` is a pure disk check.** It does not consult metadata, which is exactly what lets the ladder
+  distinguish "files present, metadata expired" from an outright miss. A filesystem failure surfaces as
+  `TypeCacheError` rather than being laundered into `false` (which v3 did).
+
+In-process interleavings that could strand one plane are prevented by `TypeRegistry`'s mutation semaphore; the
+both-planes check is the backstop for anything external, including other processes.
 
 ---
 
 ## Removal ordering
 
-`remove` (single package) deletes the metadata entry, then the on-disk directory -- two explicit steps. It deliberately does **not** use SqliteCache's transactional `invalidate(key, onRemoved)` callback, because that callback only fires when a metadata row actually matched, and files can outlive their metadata: a TTL-expired entry is evicted from SQLite on read, leaving the on-disk files behind. Deleting metadata first means a crash between the two steps leaves harmless orphaned files (a later refetch overwrites them) rather than a phantom cache hit (metadata present, files gone).
+`TypeCache.remove` deletes the metadata entry **first**, then the directory — two explicit steps.
 
-`prune` (bulk) evicts every expired metadata entry, then deletes each one's directory best-effort, ignoring per-directory failures. File removals are side effects outside the SQL transaction, so an orphaned directory is harmless -- a later refetch overwrites it. See the comments in `src/layers/CacheServiceLive.ts`.
+It deliberately does not ride the store's transactional `invalidate(key, onRemoved)` callback, because that
+callback only fires when a metadata row actually matched, and files routinely outlive their metadata (a
+TTL-expired entry is evicted on read, leaving files behind). Ordering metadata first means a crash between the
+two steps leaves harmless orphaned files that a later refetch overwrites, never a phantom cache hit with
+metadata present and files gone.
+
+---
+
+## Prune
+
+`TypeCache.prune` calls the store's `prune()`, then walks the returned keys, parses each back into a
+`PackageSpec` and removes its directory. It returns `CachePruneResult`
+(`{ count, removed: [{ name, version }] }`), where `count` is the store's evicted-entry count and `removed`
+lists only the directories that were **actually** deleted.
+
+Prune is deliberately **not** transactional. File removals are side effects outside the SQL transaction, so a
+mid-loop rollback would restore all metadata while earlier directories were already gone. Metadata is pruned
+first and per-directory failures are swallowed — an orphaned directory is harmless because a later refetch
+overwrites it — but a failed removal is not claimed in `removed`.
+
+`TypeRegistry.pruneCache` wraps this under the mutation semaphore and its own span.
 
 ---
 
 ## Cache directory resolution
 
-The cache root resolves through xdg-effect `AppDirs` for the `type-registry-effect` namespace (configured in `src/platforms/node.ts`), replacing the deleted hand-rolled XDG helper.
+Two layer factories, both parameterized statics on the service class:
 
-Note one behavioral quirk: `AppDirs` does not apply XDG per-type defaults. With `XDG_CACHE_HOME` unset, the cache root is `~/.type-registry-effect` (no `.cache` segment); with it set, the root is `$XDG_CACHE_HOME/type-registry-effect`. The SQLite DB lives at `<cacheRoot>/metadata.db`.
+- `TypeCache.layer({ cacheDir })` — an explicit absolute directory. A relative path is developer wiring and
+  dies at layer construction.
+- `TypeCache.layerXdg({ namespace? })` — roots the cache at `<AppDirs cache>/<namespace>`, default namespace
+  `ts-vfs`. It uses `AppDirs.ensureCache`, which also discharges the store's recorded constraint that the
+  database directory must exist before `SqliteClient.layer` is built, then creates the namespace subdirectory.
+  A namespace that is empty, `.`/`..`, or contains a separator is a wiring defect and dies at construction.
 
-For tests, pair `makeNodeCacheLayer(baseDir)` with `SqliteCache.Test()` to control the cache location directly.
+Because these are factories rather than layer values, **bind the built layer to a `const` and provide that
+const** — two provide sites of `TypeCache.layerXdg()` mint two independent caches. This is the layer
+memoization discipline.
+
+---
+
+## Testing the cache
+
+The metadata plane is swappable, so cache tests need no real database file:
+
+```typescript
+const TestLayer = TypeCache.layer({ cacheDir }).pipe(
+  Layer.provideMerge(Layer.mergeAll(Cache.layerTest(), NodeFileSystem.layer, Path.layer)),
+);
+```
+
+`__test__/TypeCache.test.ts` pairs `Cache.layerTest()` (`:memory:`) with a temp `cacheDir`, uses
+`FileSystem.layerNoop` to force IO failures into typed `TypeCacheError` values, and asserts that the wiring
+defects (relative `cacheDir`, malformed namespace) die under `Layer.build` + `Effect.exit`.
 
 ---
 
 ## Related documentation
 
-- **Architecture:** `./architecture.md` -- service and layer composition, public API
-- **Observability:** `./observability.md` -- event channel, metrics, fault tolerance
+- **Architecture:** `./architecture.md` — service composition, error model, public API
+- **Observability:** `./observability.md` — cache events, spans, fault tolerance
 - **Main package README:** `README.md`

@@ -13,6 +13,14 @@ export default async () => {
 				coverageTargets: AgentPlugin.COVERAGE_LEVELS.strict.coverageTargets,
 			}),
 		],
+		resolve: {
+			alias: {
+				// The repo builds and typechecks against the catalog typescript
+				// (7.x/tsgo, no compiler API); tests exercising TsEnvironment need
+				// a classic compiler at runtime, provided via this npm alias.
+				typescript: "typescript-classic",
+			},
+		},
 		test: {
 			...(projects ? { projects } : {}),
 			tags,

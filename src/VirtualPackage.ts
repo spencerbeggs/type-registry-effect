@@ -1,226 +1,143 @@
-import { FileSystem } from "@effect/platform";
-import type { PlatformError } from "@effect/platform/Error";
-import { Effect } from "effect";
-import type { VirtualFileSystem } from "./services/CacheService.js";
+import type { PlatformError } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
+import type { Vfs } from "./Vfs.js";
 
 /**
- * Creates virtual npm packages from TypeScript declaration content for
- * inclusion in a {@link VirtualFileSystem} without fetching from the CDN.
+ * A synthetic npm package built from locally supplied TypeScript declaration
+ * content, for inclusion in a {@link Vfs} without fetching from the CDN.
  *
  * @remarks
- * `VirtualPackage` is useful when you have locally-generated `.d.ts` files —
- * for example, output from API Extractor, hand-written ambient declarations, or
- * declaration files bundled alongside your own packages — and want to inject
- * them into the same VFS that TypeRegistry builds from remote packages.
+ * Useful when you have locally generated `.d.ts` files — API Extractor
+ * output, hand-written ambient declarations — and want them in the same VFS
+ * `TypeRegistry` builds from remote packages. Instances are transient: they
+ * are never persisted to the disk cache.
  *
- * Instances are **transient**: they are not persisted to the disk cache and
- * live only as long as the VFS they produce. Call {@link VirtualPackage.generateVfs}
- * to obtain a VFS that can be merged with other VFS maps.
+ * The class is deliberately subclass-friendly (the rspress consumer extends
+ * it): construct via `VirtualPackage.make(...)` or the statics, and extend
+ * with `class Mine extends VirtualPackage { ... }`.
  *
- * @see {@link VirtualFileSystem} for the VFS type consumed by TypeScript tooling
+ * @example
+ * ```ts
+ * import { VirtualPackage } from "type-registry-effect";
+ *
+ * const pkg = VirtualPackage.create("@my-org/api-types", "1.0.0", "export interface User { id: string }");
+ * const vfs = pkg.toVfs();
+ * // node_modules/@my-org/api-types/package.json, node_modules/@my-org/api-types/index.d.ts
+ * ```
  *
  * @public
  */
-export class VirtualPackage {
-	constructor(
-		readonly name: string,
-		readonly version: string,
-		private readonly entries: Map<string, string>,
-	) {}
-
+export class VirtualPackage extends Schema.Class<VirtualPackage>("VirtualPackage")({
+	/** The package name (e.g. `"@my-org/api-types"`). */
+	name: Schema.String,
+	/** The package version. */
+	version: Schema.String,
+	/** Entry file names (e.g. `"index.d.ts"`) mapped to declaration source. */
+	entries: Schema.ReadonlyMap(Schema.String, Schema.String),
+}) {
 	/**
-	 * Single-entry convenience factory.
-	 *
-	 * Creates a virtual package whose sole entry point is `index.d.ts`.
-	 *
-	 * @param name - Package name (e.g. `"@my-org/api-types"`).
-	 * @param version - Semver version string (e.g. `"1.0.0"`).
-	 * @param declarations - The full TypeScript declaration source for `index.d.ts`.
-	 * @returns A new {@link VirtualPackage} instance.
-	 *
-	 * @example
-	 * ```typescript
-	 * import type { VirtualFileSystem } from "type-registry-effect";
-	 * import { VirtualPackage } from "type-registry-effect";
-	 *
-	 * const declarations = `
-	 *   export interface User {
-	 *     id: string;
-	 *     name: string;
-	 *   }
-	 * `;
-	 *
-	 * const pkg = VirtualPackage.create("@my-org/api-types", "1.0.0", declarations);
-	 * const vfs: VirtualFileSystem = pkg.generateVfs();
-	 * console.log([...vfs.keys()]);
-	 * // ["node_modules/@my-org/api-types/package.json",
-	 * //  "node_modules/@my-org/api-types/index.d.ts"]
-	 * ```
-	 *
-	 * @public
+	 * Single-entry factory: a virtual package whose sole entry point is
+	 * `index.d.ts`.
 	 */
 	static create(name: string, version: string, declarations: string): VirtualPackage {
-		const entries = new Map<string, string>();
-		entries.set("index.d.ts", declarations);
-		return new VirtualPackage(name, version, entries);
+		return VirtualPackage.make({ name, version, entries: new Map([["index.d.ts", declarations]]) });
 	}
 
 	/**
-	 * Multi-entry factory.
-	 *
-	 * Creates a virtual package with multiple `.d.ts` entry point files,
-	 * producing a `package.json` that uses the `exports` map.
-	 *
-	 * @param name - Package name.
-	 * @param version - Semver version string.
-	 * @param entries - Map of file names (e.g. `"index.d.ts"`, `"testing.d.ts"`)
-	 *   to their declaration source content.
-	 * @returns A new {@link VirtualPackage} instance.
-	 *
-	 * @example
-	 * ```typescript
-	 * import type { VirtualFileSystem } from "type-registry-effect";
-	 * import { VirtualPackage } from "type-registry-effect";
-	 *
-	 * const entries = new Map<string, string>([
-	 *   ["index.d.ts", "export declare function run(): void;"],
-	 *   ["testing.d.ts", "export declare function mock(): void;"],
-	 * ]);
-	 *
-	 * const pkg = VirtualPackage.createMultiEntry("@my-org/sdk", "2.0.0", entries);
-	 * const vfs: VirtualFileSystem = pkg.generateVfs();
-	 * console.log([...vfs.keys()]);
-	 * // ["node_modules/@my-org/sdk/package.json",
-	 * //  "node_modules/@my-org/sdk/index.d.ts",
-	 * //  "node_modules/@my-org/sdk/testing.d.ts"]
-	 * ```
-	 *
-	 * @public
-	 */
-	static createMultiEntry(name: string, version: string, entries: Map<string, string>): VirtualPackage {
-		return new VirtualPackage(name, version, entries);
-	}
-
-	/**
-	 * Load a single `.d.ts` file from disk and create a virtual package from it.
+	 * Multi-entry factory: one `.d.ts` per entry point, exposed through a
+	 * synthetic `exports` map.
 	 *
 	 * @remarks
-	 * Reads the file through the platform-agnostic
-	 * {@link @effect/platform#FileSystem | FileSystem} service, so it works on any
-	 * platform whose `FileSystem` layer is provided (Node, browser, etc.) rather
-	 * than binding to `node:fs`. The resulting package has a single `index.d.ts`
-	 * entry whose content matches the file on disk.
+	 * An empty entries map is developer wiring, not input — it would produce a
+	 * package whose `types` points at a file that does not exist — so it
+	 * throws at construction (defect posture), as does an entry set whose
+	 * names collide after extension normalization (see
+	 * {@link VirtualPackage.toVfs}).
+	 */
+	static createMultiEntry(name: string, version: string, entries: ReadonlyMap<string, string>): VirtualPackage {
+		if (entries.size === 0) {
+			throw new Error(`VirtualPackage.createMultiEntry: "${name}" needs at least one entry file`);
+		}
+		return VirtualPackage.make({ name, version, entries });
+	}
+
+	/**
+	 * Load a single `.d.ts` file from disk as a virtual package with one
+	 * `index.d.ts` entry.
 	 *
-	 * @param name - Package name.
-	 * @param version - Semver version string.
-	 * @param filePath - Absolute or relative path to a `.d.ts` file.
-	 * @returns An Effect that succeeds with a new {@link VirtualPackage} instance,
-	 *   requiring a {@link @effect/platform#FileSystem | FileSystem}.
-	 *
-	 * @example
-	 * ```typescript
-	 * import { NodeFileSystem } from "@effect/platform-node";
-	 * import { Effect } from "effect";
-	 * import type { VirtualFileSystem } from "type-registry-effect";
-	 * import { VirtualPackage } from "type-registry-effect";
-	 *
-	 * const program = Effect.gen(function* () {
-	 *   const pkg = yield* VirtualPackage.fromFile(
-	 *     "@my-org/api-types",
-	 *     "1.0.0",
-	 *     "./dist/api-types.d.ts",
-	 *   );
-	 *   const vfs: VirtualFileSystem = pkg.generateVfs();
-	 *   return vfs;
-	 * });
-	 *
-	 * await Effect.runPromise(Effect.provide(program, NodeFileSystem.layer));
-	 * ```
-	 *
-	 * @public
+	 * @remarks
+	 * Reads through the platform-agnostic `FileSystem` service; the
+	 * `PlatformError` surfaces typed.
 	 */
 	static fromFile(
 		name: string,
 		version: string,
 		filePath: string,
-	): Effect.Effect<VirtualPackage, PlatformError, FileSystem.FileSystem> {
+	): Effect.Effect<VirtualPackage, PlatformError.PlatformError, FileSystem.FileSystem> {
 		return Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const content = yield* fs.readFileString(filePath);
 			return VirtualPackage.create(name, version, content);
-		});
+		}).pipe(Effect.withSpan("VirtualPackage.fromFile"));
 	}
 
 	/**
-	 * Generate the full {@link VirtualFileSystem}: a synthetic `package.json`
-	 * plus all entry `.d.ts` files, with every path prefixed by
-	 * `node_modules/<name>/`.
+	 * The package's {@link Vfs}: a synthetic `package.json` plus every entry
+	 * file, each path prefixed `node_modules/<name>/`.
 	 *
-	 * @returns A {@link VirtualFileSystem} map ready to be merged with other VFS maps.
-	 *
-	 * @example
-	 * ```typescript
-	 * import type { VirtualFileSystem } from "type-registry-effect";
-	 * import { VirtualPackage } from "type-registry-effect";
-	 *
-	 * const pkg = VirtualPackage.create("my-types", "1.0.0", "export type Foo = string;");
-	 * const vfs: VirtualFileSystem = pkg.generateVfs();
-	 *
-	 * for (const [path, content] of vfs) {
-	 *   console.log(`${path} (${content.length} chars)`);
-	 * }
-	 * ```
-	 *
-	 * @public
+	 * @remarks
+	 * The `package.json` uses `types` for a single entry and an `exports` map
+	 * for multiple entries, so TypeScript module resolution works against the
+	 * generated VFS.
 	 */
-	generateVfs(): VirtualFileSystem {
-		const vfs: VirtualFileSystem = new Map();
+	toVfs(): Vfs {
+		const vfs: Vfs = new Map();
 		const prefix = `node_modules/${this.name}`;
-
-		vfs.set(`${prefix}/package.json`, this.generatePackageJson());
-
+		vfs.set(`${prefix}/package.json`, this.toPackageJson());
 		for (const [fileName, content] of this.entries) {
+			// Same wiring-defect posture as the empty-entries check: an entry
+			// named package.json would silently replace the generated manifest.
+			if (fileName === "package.json") {
+				throw new Error(`VirtualPackage: "${this.name}" cannot define package.json as an entry`);
+			}
 			vfs.set(`${prefix}/${fileName}`, content);
 		}
-
 		return vfs;
 	}
 
-	/**
-	 * Generate synthetic `package.json` content for the virtual package.
-	 *
-	 * @remarks
-	 * Uses the `types` field for single-entry packages and the `exports` map
-	 * for multi-entry packages so that TypeScript module resolution works
-	 * correctly against the generated VFS.
-	 *
-	 * @returns The `package.json` content as a JSON string.
-	 *
-	 * @internal
-	 */
-	private generatePackageJson(): string {
-		const isSingleEntry = this.entries.size <= 1;
-
-		interface PkgJson {
+	private toPackageJson(): string {
+		// Both throws below are wiring defects, checked here so every
+		// construction path (factories, `make`, subclass constructors) hits
+		// them the moment a Vfs is produced.
+		if (this.entries.size === 0) {
+			throw new Error(`VirtualPackage: "${this.name}" has no entry files — nothing to point types at`);
+		}
+		const manifest: {
 			name: string;
 			version: string;
 			types?: string;
 			exports?: Record<string, { types: string }>;
-		}
+		} = { name: this.name, version: this.version };
 
-		const pkg: PkgJson = { name: this.name, version: this.version };
-
-		if (isSingleEntry) {
-			pkg.types = "index.d.ts";
+		if (this.entries.size === 1) {
+			const [only] = this.entries.keys();
+			manifest.types = only ?? "index.d.ts";
 		} else {
-			pkg.exports = {};
-			for (const [fileName] of this.entries) {
+			manifest.exports = {};
+			const sources = new Map<string, string>();
+			for (const fileName of this.entries.keys()) {
 				const baseName = fileName.replace(/\.d\.(m|c)?ts$/, "");
 				const key = baseName === "index" ? "." : `./${baseName}`;
-				pkg.exports[key] = { types: `./${fileName}` };
+				const previous = sources.get(key);
+				if (previous !== undefined) {
+					throw new Error(
+						`VirtualPackage: "${this.name}" entries "${previous}" and "${fileName}" both normalize to the export key "${key}"`,
+					);
+				}
+				sources.set(key, fileName);
+				manifest.exports[key] = { types: `./${fileName}` };
 			}
 		}
-
-		return JSON.stringify(pkg, null, 2);
+		return JSON.stringify(manifest, null, 2);
 	}
 }
