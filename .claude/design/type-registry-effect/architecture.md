@@ -170,6 +170,22 @@ is the only module that touches them and imports them inside `make`, so a missin
 `TsEnvironmentError` rather than an import-time crash, and a consumer that never calls it never loads the
 compiler.
 
+The laziness is not a nicety, it is what makes the `optional` flag true. `index.ts` re-exports both
+`TsEnvironment` and `TypeCache` statically, so ESM resolves the whole entry graph before any module body runs:
+a static *value* import of an optional peer makes every consumer of the package entry point resolve it, and
+omitting it yields `ERR_MODULE_NOT_FOUND` rather than the typed error the seam promises. That applies to
+`@effected/xdg` in `TypeCache.layerXdg` exactly as it does to the `TsEnvironment` trio. `layerXdg` is the one
+case where the import failure cannot surface as a typed error — `AppDirsError` is its own error channel, and
+the class lives in the module that failed to load — so the failure is a defect. That is sound rather than a
+compromise: `AppDirs` sits in the layer's `R` channel, and a consumer can only satisfy that requirement by
+importing `@effected/xdg` themselves, so a caller who reaches `layerXdg` definitionally has the package.
+
+Two properties of this trap are worth recording, because both defeat the obvious checks. Neither the build nor
+the test suite catches an eager optional-peer import, since every optional peer is also a devDependency and so
+always resolvable in-repo. And reading the source is not sufficient either — the question is what the *shipped*
+module graph does. The check that actually settles it is a Node resolve hook that makes the peer unresolvable,
+run against `dist/`, asserting that importing the entry point still succeeds.
+
 Laziness at runtime is only half of it: the seam also carries no compile-time dependency on `typescript`.
 Typing `compilerOptions` as `@effected/tsconfig-json`'s `CompilerOptions.Type` instead of `ts.CompilerOptions`
 means the declarations this package emits never reference the compiler, so the published types build and

@@ -55,6 +55,18 @@ npm install --save-optional @effected/tsconfig-json typescript @typescript/vfs
 
 Compiler options are unaffected by which compiler is installed: `compilerOptions` takes tsconfig JSON form from `@effected/tsconfig-json`, so nothing in your own code imports `typescript` to build them.
 
+## layerXdg fails with a missing @effected/xdg
+
+`@effected/xdg` is an optional peer, loaded lazily inside `TypeCache.layerXdg`. Install it if you want an XDG-rooted cache:
+
+```bash
+npm install --save-optional @effected/xdg
+```
+
+In practice you will hit this as a type error before a runtime one. `layerXdg` requires the `AppDirs` service in its context, and the only way to provide it is to import `@effected/xdg` yourself — so a program that composes `layerXdg` correctly already depends on the package. If the module is genuinely absent at runtime, the failure is a defect rather than a typed error, because `AppDirsError` is defined in the module that failed to load.
+
+Nothing here affects `TypeCache.layer({ cacheDir })`. That layer never touches `@effected/xdg`, and importing `type-registry-effect` does not resolve the package.
+
 ## Cache requirement is unsatisfied despite providing a Cache layer
 
 `Cache` is a `Context` key derived from the `@effected/store` package identity, so two copies of that package in the dependency tree produce two keys that are not interchangeable. A `Cache.layerSqlite` built from one copy will not satisfy the `Cache` requirement `TypeCache` declares against the other, and neither the install nor the type-check flags it. Check for a duplicate before rereading the wiring:

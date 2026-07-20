@@ -35,10 +35,12 @@ change.
 
 ## Bug Fixes
 
-- `src/TsEnvironment.ts` now loads `@effected/tsconfig-json` lazily, inside
-  the same dynamic `Promise.all` as the `typescript` and `@typescript/vfs`
-  peers, instead of as a static value import. Because `index.ts` re-exports
-  `TsEnvironment` statically, the eager import would have made omitting the
-  now-optional `@effected/tsconfig-json` peer throw `ERR_MODULE_NOT_FOUND` on
-  package import instead of surfacing a typed `TsEnvironmentError` from
-  `TsEnvironment.make`.
+- Both newly-optional peers are now loaded lazily, so omitting them behaves as
+  the `optional` flag advertises. `src/TsEnvironment.ts` loads
+  `@effected/tsconfig-json` inside the same dynamic `Promise.all` as the
+  `typescript` and `@typescript/vfs` peers, and `src/TypeCache.ts` loads
+  `@effected/xdg` inside `layerXdg`. Both were previously static value
+  imports, and because `index.ts` re-exports `TsEnvironment` and `TypeCache`
+  statically, either one made `import("type-registry-effect")` resolve the
+  peer eagerly — so a consumer who omitted it got `ERR_MODULE_NOT_FOUND` on
+  package import rather than reaching the seam that needs it.

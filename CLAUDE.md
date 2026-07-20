@@ -71,13 +71,22 @@ TS_VFS_E2E=1 pnpm vitest run __test__/e2e/jsdelivr.e2e.test.ts
 - `src/RegistryEvent.ts` — `RegistryEvent` schema union + `RegistryObserver`
   service with `layerCallback`
 - `src/TypeResolver.ts` — static resolution helpers over `PackageManifest`
-- `src/TsEnvironment.ts` — the only module touching the optional `typescript` /
+- `src/TsEnvironment.ts` — touches the optional `typescript` /
   `@typescript/vfs` / `@effected/tsconfig-json` peers. All three load lazily in
-  one `Promise.all` inside `TsEnvironment.make`. Keep them behind that dynamic
-  `import()`: `index.ts` re-exports `TsEnvironment` statically, so a static
-  value import makes every entry-point consumer resolve them eagerly and turns
-  an omitted optional peer into `ERR_MODULE_NOT_FOUND` instead of a typed
-  `TsEnvironmentError`. Type-only imports are fine — they erase.
+  one `Promise.all` inside `TsEnvironment.make`.
+
+**Optional-peer import invariant** (applies to every optional peer, in every
+module): keep the runtime values behind a dynamic `import()`. `index.ts`
+re-exports `TsEnvironment` and `TypeCache` statically, so a static *value*
+import makes every entry-point consumer resolve the peer eagerly and turns an
+omitted optional peer into `ERR_MODULE_NOT_FOUND` on
+`import("type-registry-effect")` — even for consumers who never touch the seam
+that needs it. Type-only imports are fine; they erase. The two live sites are
+`TsEnvironment.make` (`Promise.all`) and `TypeCache.layerXdg`
+(`@effected/xdg`). Verify with a Node resolve hook that makes the peer
+unresolvable, not by reading source — the build and tests will not catch it,
+because every optional peer is also a devDependency.
+
 - `src/PackageSpec.ts`, `src/Vfs.ts`, `src/VirtualPackage.ts` — domain types and
   VFS helpers (`mergeVfs`, `prefixVfs`)
 - `src/internal/` — non-public: `jsdelivr.ts` (URLs, response schemas),
@@ -142,7 +151,8 @@ adding anything.
 - **Optional peers**: `@effected/xdg` (only in `TypeCache.layerXdg`'s
   signature), `@effected/tsconfig-json`, `@typescript/vfs`, and `typescript`.
   Each is reachable only through one opt-in seam. Do not add an optional peer
-  without confirming its module load is lazy — see `src/TsEnvironment.ts` above.
+  without confirming its module load is lazy — see the optional-peer import
+  invariant above.
 - **Bundled dependency**: `@effected/semver`, a plain `dependencies` entry. Used
   only inside the body of `TypeRegistry.resolveVersion` and in no exported
   signature.
