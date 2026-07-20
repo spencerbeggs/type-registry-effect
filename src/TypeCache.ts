@@ -1,5 +1,5 @@
 import { Cache } from "@effected/store";
-import { AppDirs, AppDirsError } from "@effected/xdg";
+import type { AppDirs, AppDirsError } from "@effected/xdg";
 import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { MAX_NESTING_DEPTH } from "./internal/limits.js";
 import { isSafeRelativePath } from "./internal/resolution.js";
@@ -364,14 +364,26 @@ export class TypeCache extends Context.Service<TypeCache, TypeCacheShape>()("typ
 						),
 					);
 				}
-				const appDirs = yield* AppDirs;
+				// Lazy import: `@effected/xdg` is an optional peer, and `index.ts`
+				// re-exports `TypeCache`, so a static value import here would make
+				// every entry-point consumer resolve it eagerly. Unreachable in
+				// practice — `AppDirs` sits in this layer's `R` channel, so anyone
+				// who satisfied that requirement already has the package — which is
+				// why a load failure is a defect rather than a widening of the
+				// public error channel.
+				const xdg = yield* Effect.tryPromise({
+					try: () => import("@effected/xdg"),
+					catch: (cause) =>
+						new Error("TypeCache.layerXdg requires the optional `@effected/xdg` peer to be installed", { cause }),
+				}).pipe(Effect.orDie);
+				const appDirs = yield* xdg.AppDirs;
 				const fs = yield* FileSystem.FileSystem;
 				const path = yield* Path.Path;
 				const base = yield* appDirs.ensureCache;
 				const cacheDir = path.join(base, namespace);
 				yield* fs
 					.makeDirectory(cacheDir, { recursive: true })
-					.pipe(Effect.mapError((cause) => new AppDirsError({ directory: "cache", path: cacheDir, cause })));
+					.pipe(Effect.mapError((cause) => new xdg.AppDirsError({ directory: "cache", path: cacheDir, cause })));
 				return yield* make(cacheDir);
 			}),
 		);

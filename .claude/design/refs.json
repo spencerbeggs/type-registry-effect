@@ -4,20 +4,20 @@
 		{
 			"source": "CLAUDE.md",
 			"target": ".claude/design/type-registry-effect/architecture.md",
-			"hash": "024b60927988819cba65e8b6ff614eb35dd1187cc3642a26a00c7152313bdd7f",
-			"recordedAt": "2026-07-18"
+			"hash": "f67f4ce2fe5e9f004d2f2b8688e788daad22a2cf23a1b34bd9804a80efb32489",
+			"recordedAt": "2026-07-20"
 		},
 		{
 			"source": "CLAUDE.md",
 			"target": ".claude/design/type-registry-effect/cache-optimization.md",
-			"hash": "5b398e89a2f5941d440b40ec417e1a7232f63df8855531970c7041fb66238b8f",
-			"recordedAt": "2026-07-18"
+			"hash": "2e64339ae577dc7b5729020bb44bd8922ba70667f74bead1f086f5593a6b50aa",
+			"recordedAt": "2026-07-20"
 		},
 		{
 			"source": "CLAUDE.md",
 			"target": ".claude/design/type-registry-effect/observability.md",
-			"hash": "7641d3ef7c84ebf1672783554876f147342213916777c879d14c75500f293582",
-			"recordedAt": "2026-07-18"
+			"hash": "162aa4960fa7a01a34dfbf9804fc52e2e1d0cf02ecf4f83bfcdb6c140cb8e2a5",
+			"recordedAt": "2026-07-20"
 		}
 	]
 }

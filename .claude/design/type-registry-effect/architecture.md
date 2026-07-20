@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-07-18
-last-synced: 2026-07-18
+updated: 2026-07-20
+last-synced: 2026-07-20
 completeness: 90
 related:
   - ./observability.md
@@ -61,15 +61,26 @@ contents. Everything either produces a `Vfs` (`TypeRegistry`, `VirtualPackage`) 
 
 ### Key Dependencies
 
-- **effect** `4.0.0-beta.98` — runtime, `Context`, `Layer`, `Schema`, `FileSystem`, `Path`, and
+Required peers — three, all of them things a consumer must be able to share a single copy of:
+
+- **effect** `4.0.0-beta.99` — runtime, `Context`, `Layer`, `Schema`, `FileSystem`, `Path`, and
   `effect/unstable/http` for `HttpClient`
 - **@effect/platform-node** — Node implementations of the platform services (test and consumer wiring)
 - **@effected/store** — `Cache`, the SQLite-backed metadata plane with native TTL and prune
-- **@effected/xdg** — `AppDirs`, XDG cache-directory resolution
-- **@effected/semver** — `Range` / `SemVer` for local version resolution
+
+Optional peers — reachable only through a specific opt-in seam, so a consumer that never touches that seam
+never installs them:
+
+- **@effected/xdg** — `AppDirs`, XDG cache-directory resolution; only in `TypeCache.layerXdg`'s signature
 - **@effected/tsconfig-json** — `CompilerOptions` (tsconfig JSON form) and `TsEnumCodec`, which converts
-  JSON-form enum fields to the compiler's numeric enums
-- **@typescript/vfs** + **typescript** — optional peers, loaded lazily and only by `TsEnvironment`
+  JSON-form enum fields to the compiler's numeric enums; only reachable through `TsEnvironment`
+- **@typescript/vfs** + **typescript** — loaded lazily and only by `TsEnvironment`
+
+Bundled dependency:
+
+- **@effected/semver** — `Range` / `SemVer` for local version resolution. A plain `dependencies` entry, not a
+  peer: it is an implementation detail that never reaches the consumer (see
+  [Why the install contract is three peers](#why-the-install-contract-is-three-peers)).
 
 `src/` has no compile-time dependency on the `typescript` package. `TsEnvironment` types its
 `compilerOptions` as `CompilerOptions.Type` from `@effected/tsconfig-json` and imports the compiler only as a
@@ -100,9 +111,12 @@ into this standalone repo.
 - Metadata caching on `@effected/store`'s `Cache` with native TTL, evict-on-read expiry and bulk prune.
 - Typed progress events (`RegistryEvent` / `RegistryObserver`), opt-in and silent by default.
 - Spans on every public operation via `Effect.fn("<Service>.<method>")` / `Effect.withSpan`.
-- Test suites per module plus a self-gated live-CDN e2e suite: 85 passing, 1 skipped (the gated e2e).
-- `.repos/effect-smol` vendored as a sparse, read-only git submodule pinned to `effect@4.0.0-beta.98` — the
-  authority on what v4 actually exports, with the v3→v4 migration notes.
+- Test suites per module plus a self-gated live-CDN e2e suite: 88 passing, 1 skipped (the gated e2e).
+- `.repos/effect-smol` vendored as a sparse, read-only git submodule pinned to `effect@4.0.0-beta.99` — the
+  authority on what v4 actually exports, with the v3→v4 migration notes and the `@effect/vitest` reference
+  implementation. Vendored from the main `Effect-TS/effect` monorepo since 2026-07-19, when `effect-smol` was
+  archived and v4 development moved back; the layout is the same upstream, so the `.repos/` directory name is
+  deliberately unchanged.
 
 ### What Changed from v3
 
@@ -156,11 +170,55 @@ is the only module that touches them and imports them inside `make`, so a missin
 `TsEnvironmentError` rather than an import-time crash, and a consumer that never calls it never loads the
 compiler.
 
+The laziness is not a nicety, it is what makes the `optional` flag true. `index.ts` re-exports both
+`TsEnvironment` and `TypeCache` statically, so ESM resolves the whole entry graph before any module body runs:
+a static *value* import of an optional peer makes every consumer of the package entry point resolve it, and
+omitting it yields `ERR_MODULE_NOT_FOUND` rather than the typed error the seam promises. That applies to
+`@effected/xdg` in `TypeCache.layerXdg` exactly as it does to the `TsEnvironment` trio. `layerXdg` is the one
+case where the import failure cannot surface as a typed error — `AppDirsError` is its own error channel, and
+the class lives in the module that failed to load — so the failure is a defect. That is sound rather than a
+compromise: `AppDirs` sits in the layer's `R` channel, and a consumer can only satisfy that requirement by
+importing `@effected/xdg` themselves, so a caller who reaches `layerXdg` definitionally has the package.
+
+Two properties of this trap are worth recording, because both defeat the obvious checks. Neither the build nor
+the test suite catches an eager optional-peer import, since every optional peer is also a devDependency and so
+always resolvable in-repo. And reading the source is not sufficient either — the question is what the *shipped*
+module graph does. The check that actually settles it is a Node resolve hook that makes the peer unresolvable,
+run against `dist/`, asserting that importing the entry point still succeeds.
+
 Laziness at runtime is only half of it: the seam also carries no compile-time dependency on `typescript`.
 Typing `compilerOptions` as `@effected/tsconfig-json`'s `CompilerOptions.Type` instead of `ts.CompilerOptions`
 means the declarations this package emits never reference the compiler, so the published types build and
 resolve whether or not a consumer has a classic TypeScript installed — and the repo itself can typecheck under
 7.x/tsgo while the tests run against a 6.x compiler.
+
+### Why the install contract is three peers
+
+A dependency is a peer here for exactly one reason: **tag identity**. Effect resolves services by `Context.Key`
+identity, so two copies of a package in the tree mint two distinct keys, and a consumer's layer silently fails
+to satisfy this package's requirement — a wiring failure that reads as a type error about a requirement the
+consumer believes it already provided. Peer-declaring the package makes the package manager dedupe it.
+
+That test sorts the tree three ways:
+
+- **Peer, required** — the type appears in the `R` channel of something every consumer must build. `Cache` is
+  in the requirements of *both* `TypeCache` layer factories, so `@effected/store` is unavoidable and
+  dedupe-critical.
+- **Peer, optional** — same identity argument, but reachable only through one opt-in seam. `AppDirs` /
+  `AppDirsError` appear only in `TypeCache.layerXdg`'s signature, so a consumer on
+  `TypeCache.layer({ cacheDir })` never needs `@effected/xdg`; it stays a peer rather than becoming a
+  dependency precisely because when it *is* used, the consumer supplies the `AppDirs` layer and the two copies
+  would not match. `@effected/tsconfig-json` is the same shape behind `TsEnvironment`.
+- **Plain dependency** — nothing of it reaches the consumer. `@effected/semver`'s `Range` / `SemVer` are used
+  only inside the body of `TypeRegistry.resolveVersion`, which is typed
+  `(name: string, ref: string) => Effect<string, FetchError | VersionNotFoundError>`: no semver type in the
+  `R` channel, none in the return, and `Range.parse` failures are mapped to this package's own
+  `VersionNotFoundError`. A second copy in the tree would be harmless, so making the consumer install it is
+  cost with no contract behind it.
+
+The net is a required peer set of three — `effect`, `@effect/platform-node`, `@effected/store` — down from
+seven. The rule generalizes: **if it is in a signature, it is a peer; if it is only in a function body, it is a
+dependency.** Before moving anything across that line, check whether its types appear in an exported signature.
 
 ---
 
@@ -503,7 +561,8 @@ Vitest runs on forks (not threads) for Effect compatibility, with coverage thres
 
 ### External References
 
-- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.98`
+- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.99` (checkout of
+  `Effect-TS/effect`; directory name kept from the archived `effect-smol` repo)
 - Effect documentation: <https://effect.website/>
 - @typescript/vfs: <https://github.com/microsoft/TypeScript-Website/tree/v2/packages/typescript-vfs>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>

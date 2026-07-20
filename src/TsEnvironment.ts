@@ -1,5 +1,4 @@
 import type { CompilerOptions } from "@effected/tsconfig-json";
-import { TsEnumCodec } from "@effected/tsconfig-json";
 import type { VirtualTypeScriptEnvironment } from "@typescript/vfs";
 import { Effect, Schema } from "effect";
 import { isTypeDefinition } from "./internal/resolution.js";
@@ -7,8 +6,8 @@ import type { Vfs } from "./Vfs.js";
 
 /**
  * Raised when building a virtual TypeScript environment fails — including
- * when the optional `typescript` / `@typescript/vfs` peers are not
- * installed.
+ * when the optional `typescript` / `@typescript/vfs` /
+ * `@effected/tsconfig-json` peers are not installed.
  *
  * @public
  */
@@ -48,11 +47,16 @@ export interface TsEnvironmentOptions {
  * {@link Vfs} plus the TypeScript default lib files.
  *
  * @remarks
- * The ONLY module touching the optional `typescript` / `@typescript/vfs`
- * peers, and it loads them lazily inside {@link TsEnvironment.make} — a
- * consumer that never calls it never loads the compiler, and a missing peer
- * fails typed as {@link TsEnvironmentError} instead of crashing at import
- * time. The underlying `createDefaultMapFromNodeModules` /
+ * The ONLY module touching the optional `typescript` / `@typescript/vfs` /
+ * `@effected/tsconfig-json` peers, and it loads all three lazily inside
+ * {@link TsEnvironment.make} — a consumer that never calls it never loads
+ * the compiler, and a missing peer fails typed as
+ * {@link TsEnvironmentError} instead of crashing at import time. Keep every
+ * one of them behind that dynamic `import()`: a static value import here is
+ * reachable from `index.ts`, so it would turn an omitted optional peer into
+ * an `ERR_MODULE_NOT_FOUND` on the entry graph for consumers who never
+ * touch this module. Only the type-only `CompilerOptions` import is safe
+ * statically, because it erases. The underlying `createDefaultMapFromNodeModules` /
  * `createFSBackedSystem` read the real filesystem through TypeScript's own
  * `sys`, outside the Effect `FileSystem` service — accepted and documented;
  * this module is why the package is integrated tier on its own surface.
@@ -85,8 +89,8 @@ export class TsEnvironment {
 		return Effect.gen(function* () {
 			// Lazy imports: the peers are optional, so failing to load them is a
 			// typed failure, not an import-time crash.
-			const [tsModule, tsVfs] = yield* Effect.tryPromise({
-				try: () => Promise.all([import("typescript"), import("@typescript/vfs")]),
+			const [tsModule, tsVfs, { TsEnumCodec }] = yield* Effect.tryPromise({
+				try: () => Promise.all([import("typescript"), import("@typescript/vfs"), import("@effected/tsconfig-json")]),
 				catch: (cause) => new TsEnvironmentError({ cause }),
 			});
 			return yield* Effect.try({

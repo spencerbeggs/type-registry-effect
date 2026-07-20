@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: observability
 created: 2026-01-17
-updated: 2026-07-18
-last-synced: 2026-07-18
+updated: 2026-07-20
+last-synced: 2026-07-20
 completeness: 90
 related:
   - ./architecture.md
@@ -245,6 +245,7 @@ exporting them is the host's `Tracer` choice.
 
 ### External resources
 
-- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.98`
+- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.99` (checkout of
+  `Effect-TS/effect`; directory name kept from the archived `effect-smol` repo)
 - Effect documentation: <https://effect.website/>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>
