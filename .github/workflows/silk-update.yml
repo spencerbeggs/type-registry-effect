@@ -48,11 +48,11 @@ jobs:
           upgrade-runtime-node: "^26.0.0"
           config-dependencies: |
             @savvy-web/pnpm-plugin-silk
+            @effected/pnpm-plugin-effect
           dependencies: |
+            @effected/*
             @savvy-web/*
             @vitest-agent/*
-            semver-effect
-            xdg-effect
           run: |
             pnpm savvy init
             pnpm lint:fix 2>/dev/null || true
