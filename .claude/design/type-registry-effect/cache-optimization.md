@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-07-18
-last-synced: 2026-07-18
+updated: 2026-07-20
+last-synced: 2026-07-20
 completeness: 85
 related:
   - ./architecture.md
@@ -200,6 +200,14 @@ Two layer factories, both parameterized statics on the service class:
 Because these are factories rather than layer values, **bind the built layer to a `const` and provide that
 const** — two provide sites of `TypeCache.layerXdg()` mint two independent caches. This is the layer
 memoization discipline.
+
+The two factories differ in what they oblige the consumer to install. `AppDirs` / `AppDirsError` appear only in
+`layerXdg`'s signature, so `@effected/xdg` is an **optional peer**: a consumer that roots its cache explicitly
+with `layer({ cacheDir })` never installs it. `@effected/store` is a **required peer** for both, because
+`Cache` is in the requirements of each — and it is a peer rather than a bundled dependency because a duplicate
+copy in the tree would mint a second `Context.Key` and the consumer's `Cache` layer would silently fail to
+satisfy this package's requirement. See
+[Why the install contract is three peers](./architecture.md#why-the-install-contract-is-three-peers).
 
 ---
 

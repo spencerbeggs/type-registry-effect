@@ -10,11 +10,11 @@ TypeScript type definitions from npm packages via the jsDelivr CDN. It produces
 virtual file systems (VFS) compatible with @typescript/vfs and Twoslash for
 documentation tooling that needs type-aware code samples.
 
-Built on **Effect v4** (`4.0.0-beta.98`). Do not apply v3 idioms — see Patterns.
+Built on **Effect v4** (`4.0.0-beta.99`). Do not apply v3 idioms — see Patterns.
 
 ## Design Documentation
 
-- `@./.claude/design/type-registry-effect/architecture.md` — flat module layout, `Context.Service` services and `*Shape` interfaces, `Schema.TaggedErrorClass` error model, edge-wired composition, `TsEnvironment` seam, hardening limits
+- `@./.claude/design/type-registry-effect/architecture.md` — flat module layout, `Context.Service` services and `*Shape` interfaces, `Schema.TaggedErrorClass` error model, edge-wired composition, `TsEnvironment` seam, hardening limits, why the install contract is three peers
 - `@./.claude/design/type-registry-effect/cache-optimization.md` — two-plane cache (`@effected/store` `Cache` metadata + on-disk files), `TypeCache.layer` / `layerXdg`, stale-vs-miss ladder, prune vs remove, `Cache.layerTest()` testing
 - `@./.claude/design/type-registry-effect/observability.md` — opt-in `RegistryObserver` / `RegistryEvent` channel (silent by default), 11-variant event catalogue, `Effect.fn` span tracing, fault tolerance
 
@@ -72,7 +72,12 @@ TS_VFS_E2E=1 pnpm vitest run __test__/e2e/jsdelivr.e2e.test.ts
   service with `layerCallback`
 - `src/TypeResolver.ts` — static resolution helpers over `PackageManifest`
 - `src/TsEnvironment.ts` — the only module touching the optional `typescript` /
-  `@typescript/vfs` peers, loaded lazily inside `TsEnvironment.make`
+  `@typescript/vfs` / `@effected/tsconfig-json` peers. All three load lazily in
+  one `Promise.all` inside `TsEnvironment.make`. Keep them behind that dynamic
+  `import()`: `index.ts` re-exports `TsEnvironment` statically, so a static
+  value import makes every entry-point consumer resolve them eagerly and turns
+  an omitted optional peer into `ERR_MODULE_NOT_FOUND` instead of a typed
+  `TsEnvironmentError`. Type-only imports are fine — they erase.
 - `src/PackageSpec.ts`, `src/Vfs.ts`, `src/VirtualPackage.ts` — domain types and
   VFS helpers (`mergeVfs`, `prefixVfs`)
 - `src/internal/` — non-public: `jsdelivr.ts` (URLs, response schemas),
@@ -111,28 +116,49 @@ Exports are `.` (`src/index.ts`) and `./package.json` only. There is **no**
 ### Effect v4 Source Authority
 
 `.repos/effect-smol` is a read-only sparse submodule pinned to
-`effect@4.0.0-beta.98` (manifest: `.repos/config.json`). Consult it — including
-`MIGRATION.md` and `migration/` — to confirm what v4 actually exports before
-guessing or porting v3 idioms. Never edit it.
+`effect@4.0.0-beta.99` (manifest: `.repos/config.json`). Consult it — including
+`MIGRATION.md`, `migration/`, and `packages/vitest` for the `@effect/vitest`
+reference implementation — to confirm what v4 actually exports before guessing
+or porting v3 idioms. Never edit it.
+
+It vendors the main **Effect-TS/effect** monorepo, not effect-smol: v4
+development moved back there on 2026-07-19 when effect-smol was archived. The
+layout is unchanged and the `effect-smol` **directory name is intentional** — do
+not rename it. Services and tags live in `Context.ts`; there is no
+`ServiceMap.ts`. Keep the pin matching the installed `effect`; on any
+disagreement `node_modules` wins.
 
 ### Dependencies
 
-- `effect` and `@effect/platform-node` come from the `effect` / `effectPeers`
-  pnpm catalogs
-- `@effected/semver`, `@effected/store`, `@effected/xdg` (replaced v3's
-  `semver-effect` / `xdg-effect`)
-- `@effected/tsconfig-json` (dev + peer) supplies `CompilerOptions` and
-  `TsEnumCodec`. `TsEnvironmentOptions.compilerOptions` is `CompilerOptions.Type`
-  — tsconfig JSON form (`{ target: "es2022" }`), converted to the compiler's
-  numeric enums internally via `TsEnumCodec.encodeCompilerOptions`. `src/` and
-  `__test__/` have **no** compile-time dependency on the `typescript` package.
+Classification rule — **if it appears in an exported signature it is a peer; if
+it is only used inside a function body it is a dependency.** Apply this before
+adding anything.
+
+- **Required peers (three)**: `effect`, `@effect/platform-node` (both from the
+  `effect` / `effectPeers` pnpm catalogs), and `@effected/store`. `Cache` from
+  `@effected/store` sits in the `R` channel of both `TypeCache` layer factories,
+  so it must stay a peer — a duplicate copy mints a second `Context` tag
+  identity and layer resolution silently fails.
+- **Optional peers**: `@effected/xdg` (only in `TypeCache.layerXdg`'s
+  signature), `@effected/tsconfig-json`, `@typescript/vfs`, and `typescript`.
+  Each is reachable only through one opt-in seam. Do not add an optional peer
+  without confirming its module load is lazy — see `src/TsEnvironment.ts` above.
+- **Bundled dependency**: `@effected/semver`, a plain `dependencies` entry. Used
+  only inside the body of `TypeRegistry.resolveVersion` and in no exported
+  signature.
+- `@effected/tsconfig-json` supplies `CompilerOptions` and `TsEnumCodec`.
+  `TsEnvironmentOptions.compilerOptions` is `CompilerOptions.Type` — tsconfig
+  JSON form (`{ target: "es2022" }`), converted to the compiler's numeric enums
+  internally via `TsEnumCodec.encodeCompilerOptions`. The `CompilerOptions`
+  import is type-only; `TsEnumCodec` is a runtime value and must stay lazy.
+  `src/` and `__test__/` have **no** compile-time dependency on the `typescript`
+  package.
 - Dev `typescript` is `catalog:silk` (7.0.2, native tsc) — what `types:check`
   runs. TS 7 ships no JS compiler API, so the classic compiler arrives as the
   dev-only npm alias `typescript-classic` (`npm:typescript@^6.0.3`), wired into
-  tests by vitest `resolve.alias` (`typescript` → `typescript-classic`).
-- The `typescript` **peer** stays `^6.0.3` and optional — runtime-only, for
-  consumers calling `TsEnvironment.make`. `@typescript/vfs` is also an
-  **optional** peer.
+  tests by vitest `resolve.alias` (`typescript` → `typescript-classic`). The
+  `typescript` peer stays `^6.0.3` and optional — runtime-only, for consumers
+  calling `TsEnvironment.make`.
 
 ### Code Quality
 

@@ -5,35 +5,43 @@ Install the package, understand which peers you actually need, and wire the serv
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
+npm install type-registry-effect effect @effect/platform-node @effected/store
 ```
 
 ```bash
-pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
+pnpm add type-registry-effect effect @effect/platform-node @effected/store
 ```
 
 Requires Node.js >=24.11.0.
 
 ## Peer dependencies
 
-Every peer except the TypeScript pair is required, because its types appear in the public signatures you compose against.
+Three peers are required, because their types appear in the public signatures you compose against. The rest are optional: each one backs a single feature, and a consumer that does not use that feature never installs it.
 
 | Package | Required | Why |
 | --- | --- | --- |
 | `effect` | Yes | Core runtime, plus `FileSystem`, `Path` and `HttpClient` from `effect/unstable`. |
 | `@effect/platform-node` | Yes | `NodeFileSystem`, the Node implementation you provide at the edge. |
-| `@effected/store` | Yes | The `Cache` service backing the metadata plane. |
-| `@effected/xdg` | Yes | `AppDirs`, used by `TypeCache.layerXdg` to resolve a per-user cache root. |
-| `@effected/semver` | Yes | Range parsing behind `resolveVersion`. |
-| `@effected/tsconfig-json` | Yes | `CompilerOptions`, the tsconfig-JSON form `TsEnvironment.make` takes. |
+| `@effected/store` | Yes | The `Cache` service backing the metadata plane, in the requirements of both `TypeCache` layers. |
+| `@effected/xdg` | Optional | `AppDirs`, only for `TypeCache.layerXdg`. Wiring `TypeCache.layer({ cacheDir })` instead does not need it. |
+| `@effected/tsconfig-json` | Optional | `CompilerOptions` and the enum codec, only for `TsEnvironment`. Loaded lazily at runtime. |
 | `typescript` | Optional | Only for `TsEnvironment`, loaded lazily at runtime. |
 | `@typescript/vfs` | Optional | Only for `TsEnvironment`, loaded lazily at runtime. |
 
-Install the optional pair when you build TypeScript environments rather than raw VFS maps:
+Add the optional packages per feature — `@effected/xdg` for an XDG-rooted cache, and the TypeScript trio for building compiler environments rather than raw VFS maps:
 
 ```bash
-pnpm add typescript @typescript/vfs
+npm install @effected/xdg
+npm install @effected/tsconfig-json typescript @typescript/vfs
 ```
+
+All three of the `TsEnvironment` peers load behind a dynamic `import()` inside `make`, so omitting them costs you nothing until you call it, and calling it without them yields a typed `TsEnvironmentError` rather than a crash.
+
+Semver range resolution is no longer a peer. `@effected/semver` is an ordinary dependency, resolved for you, because it is used only inside the body of `resolveVersion` and appears in no exported signature.
+
+### Keep @effected/store deduplicated
+
+`@effected/store` carries the one required peer whose identity matters at runtime. `Cache` is a `Context` key derived from the package, so two copies in the tree produce two distinct keys. A `Cache.layerSqlite` built from the second copy will not satisfy the `Cache` requirement of `TypeCache`, and nothing about the install or the type-check flags it — the failure shows up as an unsatisfied requirement when you provide the layer. If you hit that, check for a duplicated `@effected/store` before suspecting the wiring.
 
 ## Composition happens at the edge
 

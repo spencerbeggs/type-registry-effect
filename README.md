@@ -14,18 +14,23 @@ Documentation tooling that typechecks code samples needs the declaration files f
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
+npm install type-registry-effect effect @effect/platform-node @effected/store
 ```
 
 ```bash
-pnpm add type-registry-effect effect @effect/platform-node @effected/semver @effected/store @effected/tsconfig-json @effected/xdg
+pnpm add type-registry-effect effect @effect/platform-node @effected/store
 ```
 
-Requires Node.js >=24.11.0. `typescript` and `@typescript/vfs` are optional peers, needed at runtime only when you call `TsEnvironment`:
+Requires Node.js >=24.11.0. Those three peers are required, because their types appear in the signatures you compose against. The rest are optional and pull in only with the feature that uses them:
 
 ```bash
-pnpm add typescript @typescript/vfs
+# for TypeCache.layerXdg
+npm install @effected/xdg
+# for TsEnvironment.make
+npm install @effected/tsconfig-json typescript @typescript/vfs
 ```
+
+Install `@effected/store` such that it resolves to one copy. `Cache` is keyed by package identity, so a duplicated install gives your `Cache.layerSqlite` a different key than the one `TypeCache` asks for, and the requirement goes unsatisfied with no error at the install site.
 
 ## Quick start
 

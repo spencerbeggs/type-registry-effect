@@ -45,15 +45,26 @@ These are not recoverable at runtime, so they surface immediately instead of bec
 
 ## TsEnvironmentError on the first environment build
 
-`typescript` and `@typescript/vfs` are optional peers, loaded lazily inside `TsEnvironment.make`. If they are not installed, the dynamic import fails and surfaces as `TsEnvironmentError` with the import failure in `cause`.
+`typescript`, `@typescript/vfs` and `@effected/tsconfig-json` are optional peers, loaded lazily inside `TsEnvironment.make`. If any of them is missing, the dynamic import fails and surfaces as `TsEnvironmentError` with the import failure in `cause`.
 
 ```bash
-npm install --save-optional typescript @typescript/vfs
+npm install --save-optional @effected/tsconfig-json typescript @typescript/vfs
 ```
 
 `TsEnvironment` needs the classic compiler and its JavaScript API, so install the `typescript` 6 line. TypeScript 7's native `tsc` ships no JS API and will not work here; if you keep it installed for builds, alias the classic compiler alongside it.
 
 Compiler options are unaffected by which compiler is installed: `compilerOptions` takes tsconfig JSON form from `@effected/tsconfig-json`, so nothing in your own code imports `typescript` to build them.
+
+## Cache requirement is unsatisfied despite providing a Cache layer
+
+`Cache` is a `Context` key derived from the `@effected/store` package identity, so two copies of that package in the dependency tree produce two keys that are not interchangeable. A `Cache.layerSqlite` built from one copy will not satisfy the `Cache` requirement `TypeCache` declares against the other, and neither the install nor the type-check flags it. Check for a duplicate before rereading the wiring:
+
+```bash
+npm ls @effected/store
+# more than one version or path here is the bug
+```
+
+Deduplicate with `npm dedupe`, a pnpm override, or by aligning the version range you and the library agree on.
 
 ## A package fails to load
 

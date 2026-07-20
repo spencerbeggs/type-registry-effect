@@ -171,7 +171,7 @@ A synthetic package built from local declaration content. Instances are transien
 
 `compilerOptions` is `CompilerOptions.Type` from `@effected/tsconfig-json` — tsconfig JSON form, where enum-valued fields are strings (`{ strict: true, target: "es2022" }`, not `ts.ScriptTarget.ES2022`). They are encoded to the compiler's numeric enums inside `make`, so the option type carries no dependency on the `typescript` package.
 
-The optional `typescript` and `@typescript/vfs` peers load lazily inside `make`, so a missing peer is a typed `TsEnvironmentError` rather than an import-time crash. `VirtualTypeScriptEnvironment` is deliberately not re-exported — import the type from `@typescript/vfs`, which any consumer of this module already declares.
+The optional `typescript`, `@typescript/vfs` and `@effected/tsconfig-json` peers all load lazily inside `make`, so a missing peer is a typed `TsEnvironmentError` rather than an import-time crash. `VirtualTypeScriptEnvironment` is deliberately not re-exported — import the type from `@typescript/vfs`, which any consumer of this module already declares.
 
 There is no environment cache. A consumer wanting keyed reuse across compiler options holds its own map.
 
