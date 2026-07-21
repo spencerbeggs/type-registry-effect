@@ -63,7 +63,7 @@
 	"peerDependencies": {
 		"@effect/platform-node": "catalog:effect:peers",
 		"@effected/store": "^0.1.1",
-		"@effected/tsconfig-json": "^0.2.7",
+		"@effected/tsconfig-json": "^0.2.7 || ^0.3.0",
 		"@effected/xdg": "^0.1.7",
 		"@typescript/vfs": "^1.6.4",
 		"effect": "catalog:effect:peers",

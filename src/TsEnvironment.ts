@@ -100,9 +100,7 @@ export class TsEnvironment {
 
 					// JSON-form options ("es2022") become the compiler's numeric
 					// enums here — the only place the two representations meet.
-					const compilerOptions = TsEnumCodec.encodeCompilerOptions(options.compilerOptions) as Parameters<
-						typeof tsVfs.createDefaultMapFromNodeModules
-					>[0];
+					const compilerOptions = TsEnumCodec.encodeCompilerOptions(options.compilerOptions);
 
 					// Locate lib.*.d.ts next to the compiler module that actually
 					// loaded, not via require.resolve("typescript") (the vfs

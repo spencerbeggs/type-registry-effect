@@ -90,6 +90,11 @@ export interface TypeCacheShape {
 	 * "files present" from "metadata live" (the stale-vs-miss ladder). Unlike
 	 * v3, a filesystem failure surfaces as `TypeCacheError` instead of being
 	 * laundered to `false`.
+	 *
+	 * "Files present" is trusted to mean "package complete" only because
+	 * {@link TypeCacheShape.writePackage} promotes a staged tree atomically:
+	 * the live directory appears only once every file is written, so a present
+	 * directory is never a half-written one.
 	 */
 	readonly exists: (pkg: PackageSpec) => Effect.Effect<boolean, TypeCacheError>;
 	/** Read one cached file's contents. */
@@ -101,8 +106,47 @@ export interface TypeCacheShape {
 	 * `filePath` is data from a CDN file tree: absolute paths and `..`
 	 * segments are rejected as a typed `TypeCacheError` before any join — a
 	 * hostile tree must not write outside `<cacheDir>/<name>/<version>/`.
+	 *
+	 * This is the low-level single-file primitive: it writes directly into the
+	 * live directory and does not guard completeness.
+	 * {@link TypeCacheShape.writePackage} is the atomic whole-package path the
+	 * registry uses.
 	 */
 	readonly write: (pkg: PackageSpec, filePath: string, content: string) => Effect.Effect<void, TypeCacheError>;
+	/**
+	 * Write a package's entire file set atomically: stage every file in a
+	 * sibling directory, then promote it onto the live directory in one
+	 * `rename`.
+	 *
+	 * @remarks
+	 * The invariant this method exists to hold: a reader either sees the
+	 * package's previous complete state or its new complete state, never a
+	 * half-written mixture. It works in three phases:
+	 *
+	 * 1. **Stage.** Files are written into a `.staging-<version>` directory that
+	 *    is a *sibling* of the live `<cacheDir>/<name>/<version>/` dir (same
+	 *    parent, so the final `rename` is same-filesystem and atomic). A
+	 *    `.staging-*` sibling is invisible to reads, which operate on the live
+	 *    directory specifically. Any leftover staging tree from a prior crash is
+	 *    cleared first. Each `filePath` runs through the same path guard
+	 *    {@link TypeCacheShape.write} uses (resolved against the staging root),
+	 *    so a hostile tree cannot escape; a path-safety or IO failure here
+	 *    aborts before promotion, leaving the live directory untouched.
+	 * 2. **Promote.** The live directory is removed, then the staging directory
+	 *    is renamed onto it. Because the whole directory is replaced rather than
+	 *    merged, obsolete files from a previous, larger file set are dropped.
+	 * 3. There is a tiny window between the remove and the rename where the live
+	 *    directory is briefly absent. A concurrent reader that observes it there
+	 *    classifies the package as a *miss* (via the stale-vs-miss ladder),
+	 *    which self-heals on the next fetch — strictly better than observing a
+	 *    partial tree and serving it as usable stale data.
+	 *
+	 * All failures map to a typed `TypeCacheError` with operation `"write"`.
+	 */
+	readonly writePackage: (
+		pkg: PackageSpec,
+		files: Iterable<readonly [string, string]>,
+	) => Effect.Effect<void, TypeCacheError>;
 	/** List the package's cached files, relative to its cache directory. */
 	readonly listFiles: (pkg: PackageSpec) => Effect.Effect<ReadonlyArray<string>, TypeCacheError>;
 	/**
@@ -151,16 +195,22 @@ const make = (cacheDir: string): Effect.Effect<TypeCacheShape, never, Cache | Fi
 
 		const pkgDir = (pkg: PackageSpec): string => path.join(cacheDir, pkg.name, pkg.version);
 
+		// The staging directory for an atomic `writePackage`: a sibling of the
+		// live pkg dir (shares the `<cacheDir>/<name>` parent) so the promoting
+		// `rename` is same-filesystem and atomic, and a `.staging-*` name reads
+		// never look at.
+		const stagingDir = (pkg: PackageSpec): string => path.join(cacheDir, pkg.name, `.staging-${pkg.version}`);
+
 		const fail = (operation: typeof TypeCacheError.fields.operation.Type, target: string) => (cause: unknown) =>
 			new TypeCacheError({ operation, path: target, cause });
 
-		const safePath = (
+		const safeJoin = (
 			operation: typeof TypeCacheError.fields.operation.Type,
-			pkg: PackageSpec,
+			root: string,
 			filePath: string,
 		): Effect.Effect<string, TypeCacheError> =>
 			isSafeRelativePath(filePath)
-				? Effect.succeed(path.join(pkgDir(pkg), filePath))
+				? Effect.succeed(path.join(root, filePath))
 				: Effect.fail(
 						new TypeCacheError({
 							operation,
@@ -168,6 +218,12 @@ const make = (cacheDir: string): Effect.Effect<TypeCacheShape, never, Cache | Fi
 							cause: new Error("path escapes the package cache directory"),
 						}),
 					);
+
+		const safePath = (
+			operation: typeof TypeCacheError.fields.operation.Type,
+			pkg: PackageSpec,
+			filePath: string,
+		): Effect.Effect<string, TypeCacheError> => safeJoin(operation, pkgDir(pkg), filePath);
 
 		const listRecursive = (
 			dir: string,
@@ -206,6 +262,32 @@ const make = (cacheDir: string): Effect.Effect<TypeCacheShape, never, Cache | Fi
 			const dirPath = path.dirname(fullPath);
 			yield* fs.makeDirectory(dirPath, { recursive: true }).pipe(Effect.mapError(fail("write", dirPath)));
 			yield* fs.writeFileString(fullPath, content).pipe(Effect.mapError(fail("write", fullPath)));
+		});
+
+		const writePackage = Effect.fn("TypeCache.writePackage")(function* (
+			pkg: PackageSpec,
+			files: Iterable<readonly [string, string]>,
+		) {
+			const staging = stagingDir(pkg);
+			const live = pkgDir(pkg);
+			// Clear any staging tree left behind by a prior crash, then recreate
+			// it so the promoting `rename` has a directory to move even when the
+			// file set is empty.
+			yield* fs.remove(staging, { recursive: true, force: true }).pipe(Effect.mapError(fail("write", staging)));
+			yield* fs.makeDirectory(staging, { recursive: true }).pipe(Effect.mapError(fail("write", staging)));
+			// Stage every file. A path-safety or IO failure here aborts before
+			// promotion, so the live directory is left untouched.
+			for (const [filePath, content] of files) {
+				const fullPath = yield* safeJoin("write", staging, filePath);
+				const dirPath = path.dirname(fullPath);
+				yield* fs.makeDirectory(dirPath, { recursive: true }).pipe(Effect.mapError(fail("write", dirPath)));
+				yield* fs.writeFileString(fullPath, content).pipe(Effect.mapError(fail("write", fullPath)));
+			}
+			// Promote atomically: drop the old tree, then rename staging onto it.
+			// The whole directory is replaced, so obsolete files from a larger
+			// prior set are dropped.
+			yield* fs.remove(live, { recursive: true, force: true }).pipe(Effect.mapError(fail("write", live)));
+			yield* fs.rename(staging, live).pipe(Effect.mapError(fail("write", live)));
 		});
 
 		const listFiles = Effect.fn("TypeCache.listFiles")(function* (pkg: PackageSpec) {
@@ -284,6 +366,7 @@ const make = (cacheDir: string): Effect.Effect<TypeCacheShape, never, Cache | Fi
 			exists,
 			read,
 			write,
+			writePackage,
 			listFiles,
 			readMetadata,
 			writeMetadata,

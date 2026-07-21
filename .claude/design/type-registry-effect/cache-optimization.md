@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-07-20
-last-synced: 2026-07-20
+updated: 2026-07-21
+last-synced: 2026-07-21
 completeness: 85
 related:
   - ./architecture.md
@@ -103,16 +103,21 @@ human-readable.
   @effect/schema/1.0.0/...          # scoped: @scope/name/version/…
 ```
 
-`TypeCache.write` rejects any `filePath` that is absolute or contains `..` **before** any join
-(`isSafeRelativePath`, `src/internal/resolution.ts`), failing with a typed `TypeCacheError`. The paths written
-here come from a CDN file tree, so a hostile tree must not be able to write outside
-`<cacheDir>/<name>/<version>/`. `PackageSpec`'s own field patterns close the same hole for `name` and `version`.
+Two write paths land here. `TypeCache.write` is the low-level single-file primitive: it writes one file straight into the live `<cacheDir>/<name>/<version>/` directory and does not guard completeness. `TypeCache.writePackage` is the whole-package path the registry commits through, and it is atomic — see [Atomic package writes](#atomic-package-writes).
 
-Directory listing (`listFiles`, `getVfs`) walks recursively under `MAX_NESTING_DEPTH`; a tree deeper than the
-cap fails typed rather than recursing without bound.
+Both reject any `filePath` that is absolute or contains `..` **before** any join (`isSafeRelativePath`, `src/internal/resolution.ts`), failing with a typed `TypeCacheError`. The paths written here come from a CDN file tree, so a hostile tree must not be able to write outside its target directory. `PackageSpec`'s own field patterns close the same hole for `name` and `version`.
 
-`getVfs` reads every cached file and keys it `node_modules/<name>/<path>`, normalizing backslashes. The disk
-tree is an implementation detail the VFS hides.
+Directory listing (`listFiles`, `getVfs`) walks recursively under `MAX_NESTING_DEPTH`; a tree deeper than the cap fails typed rather than recursing without bound.
+
+`getVfs` reads every cached file and keys it `node_modules/<name>/<path>`, normalizing backslashes. The disk tree is an implementation detail the VFS hides.
+
+### Atomic package writes
+
+`writePackage(pkg, files)` replaces the whole `<name>/<version>/` tree in one step, so the live directory only ever holds a *complete* file set. It stages every file into a `.staging-<version>` directory that is a **sibling** of the live dir — same `<cacheDir>/<name>` parent, so the promoting `rename` is same-filesystem and atomic, and a `.staging-*` name is invisible to reads, which target the live dir specifically — then promotes by removing the live dir and renaming staging onto it. Because the whole directory is replaced rather than merged, obsolete files from a larger previous version are dropped.
+
+A path-safety or IO failure during staging aborts **before** promotion, leaving the live dir untouched (or absent, on a first fetch); a crash never leaves a partial tree the stale-vs-miss ladder would serve as usable stale data. There is a tiny window between the live-dir remove and the rename where the live dir is briefly absent; a concurrent reader there classifies the package as a miss (see [The stale-vs-miss ladder](#the-stale-vs-miss-ladder)), which self-heals on the next fetch — strictly better than serving a partial tree. This atomic promotion is what lets `exists` read "files present" as "package complete"; no completion marker is written.
+
+`TypeRegistry.fetchAndCache` is the only caller — it assembles the full file array then commits it through `writePackage` under the mutation semaphore. See [architecture.md](./architecture.md#typeregistry) for the commit-only lock scope.
 
 ---
 
@@ -147,11 +152,8 @@ and `exists` (files on disk?).
 
 Two details are load-bearing:
 
-- **A hit requires both planes.** Live metadata whose files are gone is an external deletion; serving it would
-  make `getVfs` return an empty plane. Requiring both makes that case a miss and self-heals.
-- **`exists` is a pure disk check.** It does not consult metadata, which is exactly what lets the ladder
-  distinguish "files present, metadata expired" from an outright miss. A filesystem failure surfaces as
-  `TypeCacheError` rather than being laundered into `false` (which v3 did).
+- **A hit requires both planes.** Live metadata whose files are gone is an external deletion; serving it would make `getVfs` return an empty plane. Requiring both makes that case a miss and self-heals.
+- **`exists` is a pure disk check — and now a trustworthy completeness signal.** It does not consult metadata, which is exactly what lets the ladder distinguish "files present, metadata expired" from an outright miss. "Files present" can be read as "package complete" because `writePackage` only ever exposes a fully-staged directory (see [Atomic package writes](#atomic-package-writes)) — a present directory is never a half-written one, so "stale" never means "partial". A filesystem failure surfaces as `TypeCacheError` rather than being laundered into `false` (which v3 did).
 
 In-process interleavings that could strand one plane are prevented by `TypeRegistry`'s mutation semaphore; the
 both-planes check is the backstop for anything external, including other processes.

@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-07-20
-last-synced: 2026-07-20
+updated: 2026-07-21
+last-synced: 2026-07-21
 completeness: 90
 related:
   - ./observability.md
@@ -329,7 +329,9 @@ boundary, via a single `promote404` helper.
 
 `Context.Service` at `type-registry-effect/TypeCache`. A two-plane cache: files on disk under
 `<cacheDir>/<name>/<version>/`, metadata in `@effected/store`'s `Cache`. Methods: `exists`, `read`, `write`,
-`listFiles`, `readMetadata`, `writeMetadata`, `getVfs`, `remove`, `prune`.
+`writePackage`, `listFiles`, `readMetadata`, `writeMetadata`, `getVfs`, `remove`, `prune`. `writePackage` is the
+atomic whole-package commit path (stage-then-`rename`) the registry uses; `write` is the low-level single-file
+primitive that does not guard completeness. See `cache-optimization.md`.
 
 Layer statics are **parameterized factories** — bind the built layer to a `const` and provide that, or two
 provide sites mint two caches:
@@ -374,10 +376,7 @@ appears, arrives as another layer for this service — the service seam is the e
 
 Two behaviours are load-bearing:
 
-- **Mutation serialization.** A `Semaphore` of 1 serializes `fetchAndCache`, `clearCache` and `pruneCache`, so
-  a `clearCache` cannot land between a fetch's file writes and its metadata write and strand live metadata with
-  no files. This guards fibers in *this* runtime only; cross-process races on a shared cache directory are out
-  of scope, with the both-planes hit check as the backstop.
+- **Commit serialization.** A `Semaphore` of 1 serializes the cache *commit* — `fetchAndCache`'s `writePackage` promotion plus its metadata write — together with `clearCache` and `pruneCache`, so a `clearCache` cannot land between a fetch's files and its metadata and strand live metadata with no files. The network fetches (`getPackageJson`, `getTypeFiles`) run *outside* the lock, so a concurrency-limited batch fetches uncached packages in parallel and only the fast local-disk commits serialize. A single global semaphore, not per-package keyed locks, is a deliberate choice. This guards fibers in *this* runtime only; cross-process races on a shared cache directory are out of scope, with the both-planes hit check as the backstop.
 - **Best-effort batching.** `getVfs` loads at concurrency 5, accumulates per-package failures, emits
   `PackageLoadFailed` for each and merges the survivors. It fails — with a structured `BatchLoadError` — only
   when every package fails. An empty array yields an empty `Vfs`, not an error.
