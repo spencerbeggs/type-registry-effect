@@ -43,19 +43,19 @@
 		"types:check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@effected/semver": "^0.1.1"
+		"@effected/semver": "^0.2.0"
 	},
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
 		"@effected/store": "^0.1.1",
-		"@effected/tsconfig-json": "^0.2.4",
-		"@effected/xdg": "^0.1.4",
-		"@savvy-web/bundler": "^2.0.4",
-		"@savvy-web/silk": "^3.0.4",
+		"@effected/tsconfig-json": "^0.2.7",
+		"@effected/xdg": "^0.1.7",
+		"@savvy-web/bundler": "^2.0.5",
+		"@savvy-web/silk": "^3.0.5",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^2.0.2",
+		"@vitest-agent/plugin": "^2.0.3",
 		"effect": "catalog:effect",
 		"typescript": "catalog:silk",
 		"typescript-classic": "npm:typescript@^6.0.3"
