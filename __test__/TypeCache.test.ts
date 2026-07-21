@@ -24,6 +24,39 @@ const undeletableError = (target: string) =>
 		pathOrDescriptor: target,
 	});
 
+const writeError = (target: string) =>
+	PlatformError.systemError({
+		_tag: "PermissionDenied",
+		module: "FileSystem",
+		method: "writeFileString",
+		pathOrDescriptor: target,
+	});
+
+/**
+ * A FileSystem wrapping NodeFileSystem whose `writeFileString` fails once
+ * `armed()` is true and at least one write in the armed window has already
+ * succeeded — i.e. it fails partway through a `writePackage` staging pass,
+ * exercising the "crash after the first file write" regression.
+ */
+const stagingFailFs = (armed: () => boolean): Layer.Layer<FileSystem.FileSystem> =>
+	Layer.effect(
+		FileSystem.FileSystem,
+		Effect.gen(function* () {
+			const base = yield* FileSystem.FileSystem;
+			let writesWhileArmed = 0;
+			const wrapped: FileSystem.FileSystem = {
+				...base,
+				writeFileString: (path, data, options) =>
+					Effect.suspend(() => {
+						if (!armed()) return base.writeFileString(path, data, options);
+						writesWhileArmed += 1;
+						return writesWhileArmed > 1 ? Effect.fail(writeError(path)) : base.writeFileString(path, data, options);
+					}),
+			};
+			return wrapped;
+		}),
+	).pipe(Layer.provide(NodeFileSystem.layer));
+
 describe("TypeCache", () => {
 	layer(TestLayer)((it) => {
 		it.effect("write, exists, read, listFiles and getVfs round-trip", () =>
@@ -42,6 +75,59 @@ describe("TypeCache", () => {
 					"node_modules/round-trip/dist/index.d.ts",
 					"node_modules/round-trip/package.json",
 				]);
+			}),
+		);
+
+		it.effect("writePackage stages then promotes atomically, leaving no .staging residue", () =>
+			Effect.gen(function* () {
+				const cache = yield* TypeCache;
+				const fs = yield* FileSystem.FileSystem;
+				const pkg = PackageSpec.make({ name: "atomic", version: "1.0.0" });
+				yield* cache.writePackage(pkg, [
+					["package.json", '{"name":"atomic"}'],
+					["dist/index.d.ts", "export declare const x: number;"],
+				]);
+				assert.isTrue(yield* cache.exists(pkg));
+				assert.deepStrictEqual((yield* cache.listFiles(pkg)).toSorted(), ["dist/index.d.ts", "package.json"]);
+				assert.strictEqual(yield* cache.read(pkg, "dist/index.d.ts"), "export declare const x: number;");
+				// The staging sibling is renamed onto the live dir on success — no leftovers.
+				assert.isFalse(yield* fs.exists(join(cacheDir, "atomic", ".staging-1.0.0")));
+			}),
+		);
+
+		it.effect("writePackage replaces the directory: a shrunk file set drops obsolete files", () =>
+			Effect.gen(function* () {
+				const cache = yield* TypeCache;
+				const pkg = PackageSpec.make({ name: "shrink", version: "1.0.0" });
+				yield* cache.writePackage(pkg, [
+					["a.d.ts", "A"],
+					["b.d.ts", "B"],
+					["nested/c.d.ts", "C"],
+				]);
+				assert.deepStrictEqual((yield* cache.listFiles(pkg)).toSorted(), ["a.d.ts", "b.d.ts", "nested/c.d.ts"]);
+				// A smaller refreshed set replaces the whole dir — the removed files are gone.
+				yield* cache.writePackage(pkg, [["a.d.ts", "A2"]]);
+				assert.deepStrictEqual(yield* cache.listFiles(pkg), ["a.d.ts"]);
+				assert.strictEqual(yield* cache.read(pkg, "a.d.ts"), "A2");
+			}),
+		);
+
+		it.effect("writePackage rejects traversal and absolute staged paths as typed failures", () =>
+			Effect.gen(function* () {
+				const cache = yield* TypeCache;
+				const pkg = PackageSpec.make({ name: "hostile-pkg", version: "1.0.0" });
+				const exit = yield* Effect.exit(
+					cache.writePackage(pkg, [
+						["package.json", "{}"],
+						["../escape.d.ts", "pwned"],
+					]),
+				);
+				assert.isTrue(Exit.isFailure(exit));
+				const error = yield* Effect.flip(cache.writePackage(pkg, [["/etc/passwd", "pwned"]]));
+				assert.instanceOf(error, TypeCacheError);
+				assert.strictEqual(error.operation, "write");
+				// The live dir was never created — an unsafe path aborts before promotion.
+				assert.isFalse(yield* cache.exists(pkg));
 			}),
 		);
 
@@ -176,6 +262,84 @@ describe("TypeCache", () => {
 			}),
 		);
 	});
+
+	it.effect("writePackage aborts staging on a mid-write failure: a fresh package leaves no live dir", () =>
+		Effect.gen(function* () {
+			const dir = mkdtempSync(join(tmpdir(), "ts-vfs-writepkg-fresh-"));
+			const FailingLayer = TypeCache.layer({ cacheDir: dir }).pipe(
+				Layer.provide(
+					Layer.mergeAll(
+						Cache.layerTest(),
+						stagingFailFs(() => true),
+						Path.layer,
+					),
+				),
+			);
+			yield* Effect.gen(function* () {
+				const cache = yield* TypeCache;
+				const pkg = PackageSpec.make({ name: "partial", version: "1.0.0" });
+				const exit = yield* Effect.exit(
+					cache.writePackage(pkg, [
+						["package.json", "{}"],
+						["index.d.ts", "export {};"],
+					]),
+				);
+				assert.isTrue(Exit.isFailure(exit));
+				// Staging was aborted before promotion. The live dir was never
+				// created, so the stale-vs-miss ladder sees a clean miss, not a
+				// partial tree it would serve as usable stale data.
+				assert.isFalse(yield* cache.exists(pkg));
+			}).pipe(Effect.provide(FailingLayer));
+		}),
+	);
+
+	it.effect("writePackage refresh failure keeps the prior complete file set intact", () =>
+		Effect.gen(function* () {
+			const dir = mkdtempSync(join(tmpdir(), "ts-vfs-writepkg-refresh-"));
+			let failMode = false;
+			const ControlledLayer = TypeCache.layer({ cacheDir: dir }).pipe(
+				Layer.provide(
+					Layer.mergeAll(
+						Cache.layerTest(),
+						stagingFailFs(() => failMode),
+						Path.layer,
+					),
+				),
+			);
+			yield* Effect.gen(function* () {
+				const cache = yield* TypeCache;
+				const pkg = PackageSpec.make({ name: "refresh", version: "1.0.0" });
+				// A complete first write succeeds.
+				yield* cache.writePackage(pkg, [
+					["a.d.ts", "A"],
+					["b.d.ts", "B"],
+				]);
+				assert.deepStrictEqual((yield* cache.listFiles(pkg)).toSorted(), ["a.d.ts", "b.d.ts"]);
+
+				// The second write fails partway through staging.
+				failMode = true;
+				const exit = yield* Effect.exit(
+					cache.writePackage(pkg, [
+						["a.d.ts", "A2"],
+						["b.d.ts", "B2"],
+						["c.d.ts", "C2"],
+					]),
+				);
+				assert.isTrue(Exit.isFailure(exit));
+
+				// Promotion never happened — the original {a,b} set with its
+				// original contents is served, and the .staging sibling never
+				// leaks into a read.
+				assert.deepStrictEqual((yield* cache.listFiles(pkg)).toSorted(), ["a.d.ts", "b.d.ts"]);
+				assert.strictEqual(yield* cache.read(pkg, "a.d.ts"), "A");
+				const vfs = yield* cache.getVfs(pkg);
+				assert.deepStrictEqual([...vfs.keys()].toSorted(), [
+					"node_modules/refresh/a.d.ts",
+					"node_modules/refresh/b.d.ts",
+				]);
+			}).pipe(Effect.provide(ControlledLayer));
+		}),
+	);
 
 	it.effect("prune reports only directories that were actually deleted", () =>
 		Effect.gen(function* () {

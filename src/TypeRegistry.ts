@@ -158,41 +158,49 @@ const make: Effect.Effect<TypeRegistryShape, never, TypeCache | PackageFetcher> 
 	const cache = yield* TypeCache;
 	const fetcher = yield* PackageFetcher;
 
-	// Serializes cache mutations (fetchAndCache, clearCache, pruneCache) so an
-	// interleaving like "clearCache lands between a fetch's file writes and
-	// its metadata write" cannot strand live metadata with no files. This
-	// guards fibers within THIS runtime only — cross-process races on a shared
-	// cache directory are out of scope (the both-planes check below is the
-	// backstop for anything external).
+	// Serializes only the cache COMMIT (writePackage + writeMetadata) and the
+	// clearCache / pruneCache mutations — so a clearCache cannot land between a
+	// fetch's files and its metadata and strand live metadata with no files
+	// (both the commit block and clearCache hold this semaphore). The network
+	// fetches run OUTSIDE the lock, so a concurrent batch parallelizes its
+	// uncached fetches instead of serializing them. This guards fibers within
+	// THIS runtime only — cross-process races on a shared cache directory are
+	// out of scope (the both-planes check below is the backstop for anything
+	// external).
 	const mutations = yield* Semaphore.make(1);
 
 	const fetchAndCacheImpl = (
 		pkg: PackageSpec,
 		options?: { readonly ttl?: Duration.Duration },
 	): Effect.Effect<void, FetchError | PackageNotFoundError | TypeCacheError> =>
-		mutations.withPermits(1)(
-			Effect.gen(function* () {
-				yield* emit({ _tag: "FetchStart", package: pkg.name, version: pkg.version });
-				const manifest = yield* fetcher.getPackageJson(pkg);
-				const typeFiles = yield* fetcher.getTypeFiles(pkg);
-				yield* cache.write(pkg, "package.json", JSON.stringify(manifest, null, 2));
-				for (const [filePath, content] of typeFiles) {
-					const normalized = filePath.replace(/^\/+/, "");
-					if (normalized !== "package.json") {
-						yield* cache.write(pkg, normalized, content);
-					}
-				}
-				const now = yield* DateTime.now;
-				yield* cache.writeMetadata(
-					pkg,
-					TypeCacheMetadata.make({
-						version: pkg.version,
-						cachedAt: now,
-						...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
-					}),
-				);
-			}),
-		);
+		Effect.gen(function* () {
+			yield* emit({ _tag: "FetchStart", package: pkg.name, version: pkg.version });
+			// Network runs outside the lock so a concurrency-limited batch fetches
+			// uncached packages in parallel.
+			const manifest = yield* fetcher.getPackageJson(pkg);
+			const typeFiles = yield* fetcher.getTypeFiles(pkg);
+			const files: Array<readonly [string, string]> = [["package.json", JSON.stringify(manifest, null, 2)]];
+			for (const [filePath, content] of typeFiles) {
+				const normalized = filePath.replace(/^\/+/, "");
+				if (normalized !== "package.json") files.push([normalized, content]);
+			}
+			const now = yield* DateTime.now;
+			// Commit under the lock: the atomic writePackage promotion plus the
+			// metadata write are one indivisible step against clearCache/prune.
+			yield* mutations.withPermits(1)(
+				Effect.gen(function* () {
+					yield* cache.writePackage(pkg, files);
+					yield* cache.writeMetadata(
+						pkg,
+						TypeCacheMetadata.make({
+							version: pkg.version,
+							cachedAt: now,
+							...(options?.ttl !== undefined ? { ttl: options.ttl } : {}),
+						}),
+					);
+				}),
+			);
+		});
 
 	const getPackageVfsImpl = (
 		pkg: PackageSpec,
