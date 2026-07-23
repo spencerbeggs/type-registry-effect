@@ -1,5 +1,14 @@
 # type-registry-effect
 
+## 2.3.0
+
+### Dependencies
+
+* | Dependency              | Type           | Action  | From   | To     |        |        |                                                          |
+  | ----------------------- | -------------- | ------- | ------ | ------ | ------ | ------ | -------------------------------------------------------- |
+  | @effected/tsconfig-json | peerDependency | updated | ^0.2.7 |        | ^0.3.0 | ^0.3.0 |                                                          |
+  | @effected/semver        | peerDependency | added   | —      | ^0.2.0 |        |        | Thanks [@spencerbeggs](https://github.com/spencerbeggs)! |
+
 ## 2.2.0
 
 ### Features
