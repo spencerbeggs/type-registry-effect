@@ -60,10 +60,6 @@ pnpmfileChecksum: sha256-vjRRicb6n4lu6APGvrP+8biug/SuwZJTSoQh6kAkevM=
 importers:
 
   .:
-    dependencies:
-      '@effected/semver':
-        specifier: ^0.2.0
-        version: 0.2.0(effect@4.0.0-beta.99)
     devDependencies:
       '@effect/platform-node':
         specifier: catalog:effect
@@ -71,6 +67,9 @@ importers:
       '@effect/vitest':
         specifier: catalog:effect
         version: 4.0.0-beta.99(effect@4.0.0-beta.99)(vitest@4.1.10)
+      '@effected/semver':
+        specifier: ^0.2.0
+        version: 0.2.0(effect@4.0.0-beta.99)
       '@effected/store':
         specifier: ^0.1.1
         version: 0.1.1(effect@4.0.0-beta.99)
