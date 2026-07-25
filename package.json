@@ -53,7 +53,7 @@
 		"@savvy-web/silk": "^3.2.3",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^2.0.7",
+		"@vitest-agent/plugin": "^2.0.9",
 		"effect": "catalog:effect",
 		"typescript": "catalog:silk",
 		"typescript-classic": "npm:typescript@^6.0.3"
