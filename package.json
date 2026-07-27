@@ -50,10 +50,10 @@
 		"@effected/tsconfig-json": "^0.3.3",
 		"@effected/xdg": "^0.1.9",
 		"@savvy-web/bundler": "^2.0.13",
-		"@savvy-web/silk": "^3.2.8",
+		"@savvy-web/silk": "^3.2.9",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^2.0.9",
+		"@vitest-agent/plugin": "^2.0.10",
 		"effect": "catalog:effect",
 		"typescript": "catalog:silk",
 		"typescript-classic": "npm:typescript@^6.0.3"
