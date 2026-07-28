@@ -1,5 +1,17 @@
 # type-registry-effect
 
+## 2.3.1
+
+### Dependencies
+
+* | Dependency              | Type           | Action  | From   | To     |                                                                          |
+  | ----------------------- | -------------- | ------- | ------ | ------ | ------------------------------------------------------------------------ |
+  | @effected/tsconfig-json | peerDependency | updated | ^0.3.0 | ^0.4.0 | [#99][#99] Thanks [@spencerbeggs](https://github.com/apps/spencerbeggs)! |
+
+### Patch Changes
+
+[#99]: https://github.com/spencerbeggs/type-registry-effect/pull/99
+
 ## 2.3.0
 
 ### Dependencies
