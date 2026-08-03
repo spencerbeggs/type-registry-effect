@@ -1,5 +1,17 @@
 # type-registry-effect
 
+## 2.3.2
+
+### Dependencies
+
+* | Dependency       | Type           | Action  | From   | To     |                                                                            |
+  | ---------------- | -------------- | ------- | ------ | ------ | -------------------------------------------------------------------------- |
+  | @effected/semver | peerDependency | updated | ^0.2.0 | ^0.3.0 | [#101][#101] Thanks [@spencerbeggs](https://github.com/apps/spencerbeggs)! |
+
+### Patch Changes
+
+[#101]: https://github.com/spencerbeggs/type-registry-effect/pull/101
+
 ## 2.3.1
 
 ### Dependencies
