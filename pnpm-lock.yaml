@@ -34,6 +34,10 @@ settings:
   excludeLinksFromLockfile: false
 
 catalogs:
+  build:
+    typescript:
+      specifier: ^7.0.2
+      version: 7.0.2
   effect:
     '@effect/platform-node':
       specifier: 4.0.0-beta.101
@@ -48,9 +52,6 @@ catalogs:
     '@types/node':
       specifier: ^26.1.2
       version: 26.1.2
-    typescript:
-      specifier: ^7.0.2
-      version: 7.0.2
 
 overrides:
   '@microsoft/api-extractor>typescript': ^6.0.3
@@ -98,7 +99,7 @@ importers:
         specifier: catalog:effect
         version: 4.0.0-beta.101
       typescript:
-        specifier: catalog:silk
+        specifier: catalog:build
         version: 7.0.2
       typescript-classic:
         specifier: npm:typescript@^6.0.3
