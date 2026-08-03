@@ -45,22 +45,22 @@
 	"devDependencies": {
 		"@effect/platform-node": "catalog:effect",
 		"@effect/vitest": "catalog:effect",
-		"@effected/semver": "^0.2.1",
+		"@effected/semver": "^0.3.0",
 		"@effected/store": "^0.1.2",
 		"@effected/tsconfig-json": "^0.4.0",
 		"@effected/xdg": "^0.1.9",
-		"@savvy-web/bundler": "^2.1.0",
-		"@savvy-web/silk": "^3.2.11",
+		"@savvy-web/bundler": "^2.1.2",
+		"@savvy-web/silk": "^3.3.1",
 		"@types/node": "catalog:silk",
 		"@typescript/vfs": "^1.6.4",
-		"@vitest-agent/plugin": "^2.0.10",
+		"@vitest-agent/plugin": "^2.0.12",
 		"effect": "catalog:effect",
-		"typescript": "catalog:silk",
+		"typescript": "catalog:build",
 		"typescript-classic": "npm:typescript@^6.0.3"
 	},
 	"peerDependencies": {
 		"@effect/platform-node": "catalog:effect:peers",
-		"@effected/semver": "^0.2.0",
+		"@effected/semver": "^0.3.0",
 		"@effected/store": "^0.1.1",
 		"@effected/tsconfig-json": "^0.4.0",
 		"@effected/xdg": "^0.1.7",
@@ -76,20 +76,20 @@
 			"optional": true
 		}
 	},
-	"packageManager": "pnpm@11.17.0+sha512.cca3cea332ad254bb84145f966d19f4879615210346fc92c79a047f23a0d7b3cca3c3792f0076ba1f1831d277efbcf0a9119b31a9a60eca7fb3d6231f331ef72",
+	"packageManager": "pnpm@11.20.0+sha512.9a6f330a95b66446ea088faf1521405a8a01f07fde7124cc9958dfed52d4bb436737e65b08f85f37b46fcba375092558ac51262b816844b22f63406ed166bfee",
 	"engines": {
 		"node": ">=24.11.0"
 	},
 	"devEngines": {
 		"packageManager": {
 			"name": "pnpm",
-			"version": "11.17.0+sha512.cca3cea332ad254bb84145f966d19f4879615210346fc92c79a047f23a0d7b3cca3c3792f0076ba1f1831d277efbcf0a9119b31a9a60eca7fb3d6231f331ef72",
+			"version": "11.20.0+sha512.9a6f330a95b66446ea088faf1521405a8a01f07fde7124cc9958dfed52d4bb436737e65b08f85f37b46fcba375092558ac51262b816844b22f63406ed166bfee",
 			"onFail": "ignore"
 		},
 		"runtime": [
 			{
 				"name": "node",
-				"version": "26.5.0",
+				"version": "26.5.1",
 				"onFail": "ignore"
 			}
 		]
