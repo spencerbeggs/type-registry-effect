@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: performance
 created: 2026-01-17
-updated: 2026-07-21
-last-synced: 2026-07-21
+updated: 2026-08-11
+last-synced: 2026-08-11
 completeness: 85
 related:
   - ./architecture.md
@@ -42,8 +42,7 @@ The cache splits storage across two planes:
 - **Metadata** — the small per-package record (`version`, `cachedAt`, optional `ttl`) in `@effected/store`'s
   `Cache`, a SQLite store with native TTL, expiry and prune.
 
-Both live behind one service, `TypeCache` (`src/TypeCache.ts`). The two planes are queried independently and
-that independence is the design — see [The stale-vs-miss ladder](#the-stale-vs-miss-ladder).
+Both live behind one service, `TypeCache` (`package/src/TypeCache.ts`). The two planes are queried independently and that independence is the design — see [The stale-vs-miss ladder](#the-stale-vs-miss-ladder).
 
 ---
 
@@ -105,7 +104,7 @@ human-readable.
 
 Two write paths land here. `TypeCache.write` is the low-level single-file primitive: it writes one file straight into the live `<cacheDir>/<name>/<version>/` directory and does not guard completeness. `TypeCache.writePackage` is the whole-package path the registry commits through, and it is atomic — see [Atomic package writes](#atomic-package-writes).
 
-Both reject any `filePath` that is absolute or contains `..` **before** any join (`isSafeRelativePath`, `src/internal/resolution.ts`), failing with a typed `TypeCacheError`. The paths written here come from a CDN file tree, so a hostile tree must not be able to write outside its target directory. `PackageSpec`'s own field patterns close the same hole for `name` and `version`.
+Both reject any `filePath` that is absolute or contains `..` **before** any join (`isSafeRelativePath`, `package/src/internal/resolution.ts`), failing with a typed `TypeCacheError`. The paths written here come from a CDN file tree, so a hostile tree must not be able to write outside its target directory. `PackageSpec`'s own field patterns close the same hole for `name` and `version`.
 
 Directory listing (`listFiles`, `getVfs`) walks recursively under `MAX_NESTING_DEPTH`; a tree deeper than the cap fails typed rather than recursing without bound.
 
@@ -203,13 +202,7 @@ Because these are factories rather than layer values, **bind the built layer to 
 const** — two provide sites of `TypeCache.layerXdg()` mint two independent caches. This is the layer
 memoization discipline.
 
-The two factories differ in what they oblige the consumer to install. `AppDirs` / `AppDirsError` appear only in
-`layerXdg`'s signature, so `@effected/xdg` is an **optional peer**: a consumer that roots its cache explicitly
-with `layer({ cacheDir })` never installs it. `@effected/store` is a **required peer** for both, because
-`Cache` is in the requirements of each — and it is a peer rather than a bundled dependency because a duplicate
-copy in the tree would mint a second `Context.Key` and the consumer's `Cache` layer would silently fail to
-satisfy this package's requirement. See
-[Why the install contract is three peers](./architecture.md#why-the-install-contract-is-three-peers).
+The two factories differ in what they oblige the consumer to install. `AppDirs` / `AppDirsError` appear only in `layerXdg`'s signature, so `@effected/xdg` is an **optional peer**: a consumer that roots its cache explicitly with `layer({ cacheDir })` never installs it. `@effected/store` is a **required peer** for both, because `Cache` is in the requirements of each. Neither is ever a `dependencies` entry: both carry their own `effect` peer, and a nested copy would resolve against a different `effect` and mint a second `Context.Key`, so the consumer's `Cache` layer would silently fail to satisfy this package's requirement. See [Why the install contract is four required peers](./architecture.md#why-the-install-contract-is-four-required-peers).
 
 ---
 
@@ -223,9 +216,7 @@ const TestLayer = TypeCache.layer({ cacheDir }).pipe(
 );
 ```
 
-`__test__/TypeCache.test.ts` pairs `Cache.layerTest()` (`:memory:`) with a temp `cacheDir`, uses
-`FileSystem.layerNoop` to force IO failures into typed `TypeCacheError` values, and asserts that the wiring
-defects (relative `cacheDir`, malformed namespace) die under `Layer.build` + `Effect.exit`.
+`package/__test__/TypeCache.test.ts` pairs `Cache.layerTest()` (`:memory:`) with a temp `cacheDir`, uses `FileSystem.layerNoop` to force IO failures into typed `TypeCacheError` values, and asserts that the wiring defects (relative `cacheDir`, malformed namespace) die under `Layer.build` + `Effect.exit`.
 
 ---
 
@@ -233,4 +224,4 @@ defects (relative `cacheDir`, malformed namespace) die under `Layer.build` + `Ef
 
 - **Architecture:** `./architecture.md` — service composition, error model, public API
 - **Observability:** `./observability.md` — cache events, spans, fault tolerance
-- **Main package README:** `README.md`
+- **Main package README:** `package/README.md`

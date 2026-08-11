@@ -5,24 +5,27 @@ Install the package, understand which peers you actually need, and wire the serv
 ## Install
 
 ```bash
-npm install type-registry-effect effect @effect/platform-node @effected/store
+npm install type-registry-effect effect @effect/platform-node @effected/store @effected/semver
 ```
 
 ```bash
-pnpm add type-registry-effect effect @effect/platform-node @effected/store
+pnpm add type-registry-effect effect @effect/platform-node @effected/store @effected/semver
 ```
 
 Requires Node.js >=24.11.0.
 
 ## Peer dependencies
 
-Three peers are required, because their types appear in the public signatures you compose against. The rest are optional: each one backs a single feature, and a consumer that does not use that feature never installs it.
+Four peers are required. The rest are optional: each one backs a single feature, and a consumer that does not use that feature never installs it.
+
+Nothing is a bundled dependency. Each `@effected/*` package pins an exact `effect` version as its own peer, so bundling one would create a second resolution site that can land on a different `effect` build than yours and fail at import. As peers they all resolve in your closure, against your `effect`.
 
 | Package | Required | Why |
 | --- | --- | --- |
 | `effect` | Yes | Core runtime, plus `FileSystem`, `Path` and `HttpClient` from `effect/unstable`. |
 | `@effect/platform-node` | Yes | `NodeFileSystem`, the Node implementation you provide at the edge. |
 | `@effected/store` | Yes | The `Cache` service backing the metadata plane, in the requirements of both `TypeCache` layers. |
+| `@effected/semver` | Yes | Range parsing and `maxSatisfying` behind `TypeRegistry.resolveVersion`. Used internally rather than in a signature, but a peer so it resolves against your `effect`. |
 | `@effected/xdg` | Optional | `AppDirs`, only for `TypeCache.layerXdg`. Wiring `TypeCache.layer({ cacheDir })` instead does not need it. |
 | `@effected/tsconfig-json` | Optional | `CompilerOptions` and the enum codec, only for `TsEnvironment`. Loaded lazily at runtime. |
 | `typescript` | Optional | Only for `TsEnvironment`, loaded lazily at runtime. |

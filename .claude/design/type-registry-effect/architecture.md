@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: architecture
 created: 2026-03-12
-updated: 2026-07-21
-last-synced: 2026-07-21
+updated: 2026-08-11
+last-synced: 2026-08-11
 completeness: 90
 related:
   - ./observability.md
@@ -49,9 +49,7 @@ contents. Everything either produces a `Vfs` (`TypeRegistry`, `VirtualPackage`) 
    directly instead of re-wrapping a namespace of free functions in a service of their own.
 2. **`Context.Service` class form** — every service is a class extending `Context.Service<Self, Shape>()(id)`
    with a separate `*Shape` interface and layer statics on the class.
-3. **Schema-backed typed errors** — failures are `Schema.TaggedErrorClass` types carrying structured fields
-   (`status`, `kind`, `operation`) and a `Schema.Defect()` `cause`; nothing is flattened to a message string
-   and nothing is classified by substring matching.
+3. **Schema-backed typed errors** — failures are `Schema.TaggedError` classes carrying structured fields (`status`, `kind`, `operation`) and a `Schema.Defect()` `cause`; nothing is flattened to a message string and nothing is classified by substring matching.
 4. **Honest signatures** — per-method error unions stay precise; a total function does not declare an error
    channel it cannot raise, and absence is `Option.none()` rather than a fabricated fallback.
 5. **Platform dependencies inside layers** — `FileSystem`, `Path` and `HttpClient` are layer requirements, never
@@ -61,37 +59,24 @@ contents. Everything either produces a `Vfs` (`TypeRegistry`, `VirtualPackage`) 
 
 ### Key Dependencies
 
-Required peers — three, all of them things a consumer must be able to share a single copy of:
+The package has **no `dependencies`** — every third-party module is a peer, required or optional, so all of them resolve in the consumer's single closure. See [Why the install contract is four required peers](#why-the-install-contract-is-four-required-peers).
 
-- **effect** `4.0.0-beta.99` — runtime, `Context`, `Layer`, `Schema`, `FileSystem`, `Path`, and
-  `effect/unstable/http` for `HttpClient`
+Required peers — four, all of them things a consumer must be able to share a single copy of:
+
+- **effect** `4.0.0-beta.107` — runtime, `Context`, `Layer`, `Schema`, `FileSystem`, `Path`, and `effect/unstable/http` for `HttpClient`
 - **@effect/platform-node** — Node implementations of the platform services (test and consumer wiring)
 - **@effected/store** — `Cache`, the SQLite-backed metadata plane with native TTL and prune
+- **@effected/semver** — `Range` / `SemVer` for local version resolution inside `TypeRegistry.resolveVersion`
 
-Optional peers — reachable only through a specific opt-in seam, so a consumer that never touches that seam
-never installs them:
+Optional peers — reachable only through a specific opt-in seam, so a consumer that never touches that seam never installs them:
 
 - **@effected/xdg** — `AppDirs`, XDG cache-directory resolution; only in `TypeCache.layerXdg`'s signature
-- **@effected/tsconfig-json** — `CompilerOptions` (tsconfig JSON form) and `TsEnumCodec`, which converts
-  JSON-form enum fields to the compiler's numeric enums; only reachable through `TsEnvironment`
+- **@effected/tsconfig-json** — `CompilerOptions` (tsconfig JSON form) and `TsEnumCodec`, which converts JSON-form enum fields to the compiler's numeric enums; only reachable through `TsEnvironment`
 - **@typescript/vfs** + **typescript** — loaded lazily and only by `TsEnvironment`
 
-Bundled dependency:
+`package/src/` has no compile-time dependency on the `typescript` package. `TsEnvironment` types its `compilerOptions` as `CompilerOptions.Type` from `@effected/tsconfig-json` and imports the compiler only as a runtime value, so the public surface does not vary with the installed TypeScript.
 
-- **@effected/semver** — `Range` / `SemVer` for local version resolution. A plain `dependencies` entry, not a
-  peer: it is an implementation detail that never reaches the consumer (see
-  [Why the install contract is three peers](#why-the-install-contract-is-three-peers)).
-
-`src/` has no compile-time dependency on the `typescript` package. `TsEnvironment` types its
-`compilerOptions` as `CompilerOptions.Type` from `@effected/tsconfig-json` and imports the compiler only as a
-runtime value, so the public surface does not vary with the installed TypeScript.
-
-The `typescript` **peer** stays `^6.0.3` and optional: TypeScript 7.x/tsgo is a native binary that ships no JS
-compiler API, so a consumer calling `TsEnvironment.make` must supply a classic compiler at runtime. The **dev**
-dependency is the shared catalog's `catalog:silk` (7.0.2, native tsc), which satisfies the `@savvy-web/bundler`
-`^7` peer; the classic compiler needed by the `TsEnvironment` tests arrives through the dev-only npm alias
-`typescript-classic` (`npm:typescript@^6.0.3`) and a Vitest `resolve.alias` — see
-[Testing Strategy](#testing-strategy).
+The `typescript` **peer** stays `^6.0.3` and optional: TypeScript 7.x/tsgo is a native binary that ships no JS compiler API, so a consumer calling `TsEnvironment.make` must supply a classic compiler at runtime. The **dev** dependency is the shared catalog's `catalog:build` (7.x, native tsc), which satisfies the `@savvy-web/bundler` peer; the classic compiler needed by the `TsEnvironment` tests arrives through the dev-only npm alias `typescript-classic` (`npm:typescript@^6.0.3`) and a Vitest `resolve.alias` — see [Testing Strategy](#testing-strategy).
 
 ---
 
@@ -103,7 +88,8 @@ into this standalone repo.
 
 ### What Exists
 
-- Flat module layout: one public concern per file in `src/`, with `src/internal/` for shared machinery.
+- A pnpm workspace with exactly one member: the published library in `package/`, under a private root that holds only the shared toolchain (see [Repository shape](#repository-shape)).
+- Flat module layout: one public concern per file in `package/src/`, with `package/src/internal/` for shared machinery.
 - Three services — `TypeCache`, `PackageFetcher`, `TypeRegistry` — plus the opt-in `RegistryObserver`.
 - Two static classes with no service ceremony: `TypeResolver` (pure resolution) and `TsEnvironment` (the
   `@typescript/vfs` seam).
@@ -111,25 +97,18 @@ into this standalone repo.
 - Metadata caching on `@effected/store`'s `Cache` with native TTL, evict-on-read expiry and bulk prune.
 - Typed progress events (`RegistryEvent` / `RegistryObserver`), opt-in and silent by default.
 - Spans on every public operation via `Effect.fn("<Service>.<method>")` / `Effect.withSpan`.
-- Test suites per module plus a self-gated live-CDN e2e suite: 88 passing, 1 skipped (the gated e2e).
-- `.repos/effect-smol` vendored as a sparse, read-only git submodule pinned to `effect@4.0.0-beta.99` — the
-  authority on what v4 actually exports, with the v3→v4 migration notes and the `@effect/vitest` reference
-  implementation. Vendored from the main `Effect-TS/effect` monorepo since 2026-07-19, when `effect-smol` was
-  archived and v4 development moved back; the layout is the same upstream, so the `.repos/` directory name is
-  deliberately unchanged.
+- Test suites per module plus a self-gated live-CDN e2e suite.
+- `.repos/effect` vendored as a sparse, read-only git submodule pinned to `effect@4.0.0-beta.107` — the authority on what v4 actually exports, with the v3→v4 migration notes and the `@effect/vitest` reference implementation. It is a checkout of the main `Effect-TS/effect` monorepo, where v4 development resumed on 2026-07-19 after `effect-smol` was archived; the directory was renamed from `.repos/effect-smol` to `.repos/effect` on 2026-08-11 so it names the project it actually tracks. Keep the pin matching the installed `effect`; see `.repos/config.json` for the manifest.
 
 ### What Changed from v3
 
-- `src/errors/`, `src/layers/`, `src/services/`, `src/schemas/`, `src/platforms/node.ts`, `src/events.ts`,
-  `src/metrics.ts` and `src/node.ts` are all deleted.
+- The v3 `src/errors/`, `src/layers/`, `src/services/`, `src/schemas/`, `src/platforms/node.ts`, `src/events.ts`, `src/metrics.ts` and `src/node.ts` are all deleted.
 - The `./node` entry point is **gone**. Package exports are `.` and `./package.json`. There is no Promise
   convenience API and no pre-composed `NodeLayer`; consumers compose platform layers at the edge.
 - The Effect Metrics module is gone — see `observability.md`.
 - `Context.GenericTag` with interface/const merging is replaced by the `Context.Service` class form.
-- `Data.TaggedError` is replaced by `Schema.TaggedErrorClass`.
-- `savvy.build.ts` dropped the `ae-missing-release-tag` / `_d_exports` suppression: `src/index.ts` now uses flat
-  named re-exports instead of `export * as`. The `ae-forgotten-export` / `_base` suppression stays, because the
-  `Context.Service` and `Schema` class factories still synthesize anonymous base classes.
+- `Data.TaggedError` is replaced by `Schema.TaggedError`.
+- `package/savvy.build.ts` dropped the `ae-missing-release-tag` / `_d_exports` suppression: `package/src/index.ts` now uses flat named re-exports instead of `export * as`. The `ae-forgotten-export` / `_base` suppression stays, because the `Context.Service` and `Schema` class factories still synthesize anonymous base classes.
 
 ### What Is Not Implemented
 
@@ -192,40 +171,51 @@ means the declarations this package emits never reference the compiler, so the p
 resolve whether or not a consumer has a classic TypeScript installed — and the repo itself can typecheck under
 7.x/tsgo while the tests run against a 6.x compiler.
 
-### Why the install contract is three peers
+### Why the install contract is four required peers
 
-A dependency is a peer here for exactly one reason: **tag identity**. Effect resolves services by `Context.Key`
-identity, so two copies of a package in the tree mint two distinct keys, and a consumer's layer silently fails
-to satisfy this package's requirement — a wiring failure that reads as a type error about a requirement the
-consumer believes it already provided. Peer-declaring the package makes the package manager dedupe it.
+Classification is **two-tier**, and the tiers are applied in order. The first tier is about resolution safety and it overrides the second.
 
-That test sorts the tree three ways:
+**Tier 1 — anything that itself carries an `effect` peer must be a peer here, never a `dependencies` entry.** Every `@effected/*` package declares `effect` as a peer, and a peer resolves from its importer's scope. A `dependencies` entry creates a *second, nested* resolution site: the nested copy can be handed a different `effect` beta than the consumer's, which strands artifacts compiled against one core inside another — the same import-time failure the workspace split exists to prevent (see [Why the library lives in `package/`](#why-the-library-lives-in-package)). Declaring it a peer, required *or* optional, keeps it in the consumer's single closure; optionality does not create a second site, it only means the consumer need not install it. This is why the package ships with **no `dependencies` at all**.
 
-- **Peer, required** — the type appears in the `R` channel of something every consumer must build. `Cache` is
-  in the requirements of *both* `TypeCache` layer factories, so `@effected/store` is unavoidable and
-  dedupe-critical.
-- **Peer, optional** — same identity argument, but reachable only through one opt-in seam. `AppDirs` /
-  `AppDirsError` appear only in `TypeCache.layerXdg`'s signature, so a consumer on
-  `TypeCache.layer({ cacheDir })` never needs `@effected/xdg`; it stays a peer rather than becoming a
-  dependency precisely because when it *is* used, the consumer supplies the `AppDirs` layer and the two copies
-  would not match. `@effected/tsconfig-json` is the same shape behind `TsEnvironment`.
-- **Plain dependency** — nothing of it reaches the consumer. `@effected/semver`'s `Range` / `SemVer` are used
-  only inside the body of `TypeRegistry.resolveVersion`, which is typed
-  `(name: string, ref: string) => Effect<string, FetchError | VersionNotFoundError>`: no semver type in the
-  `R` channel, none in the return, and `Range.parse` failures are mapped to this package's own
-  `VersionNotFoundError`. A second copy in the tree would be harmless, so making the consumer install it is
-  cost with no contract behind it.
+Tag identity says the same thing from the other direction: Effect resolves services by `Context.Key` identity, so two copies of a package mint two distinct keys and a consumer's layer silently fails to satisfy this package's requirement — a wiring failure that reads as a type error about a requirement the consumer believes it already provided.
 
-The net is a required peer set of three — `effect`, `@effect/platform-node`, `@effected/store` — down from
-seven. The rule generalizes: **if it is in a signature, it is a peer; if it is only in a function body, it is a
-dependency.** Before moving anything across that line, check whether its types appear in an exported signature.
+**Tier 2 — the signature rule then decides required versus optional.** If the type appears in an exported signature every consumer must satisfy, the peer is required; if it is reachable only through one opt-in seam, it is optional:
+
+- **Required** — `Cache` is in the requirements of *both* `TypeCache` layer factories, so `@effected/store` is unavoidable. `@effected/semver` is required despite `Range` / `SemVer` appearing in no exported signature — `TypeRegistry.resolveVersion` is typed `(name: string, ref: string) => Effect<string, FetchError | VersionNotFoundError>` and maps `Range.parse` failures to this package's own `VersionNotFoundError`. Tier 1 puts it in the peer set anyway, and since `resolveVersion` is core surface with no opt-in gate, it is required rather than optional.
+- **Optional** — `AppDirs` / `AppDirsError` appear only in `TypeCache.layerXdg`'s signature, so a consumer on `TypeCache.layer({ cacheDir })` never needs `@effected/xdg`. `@effected/tsconfig-json` is the same shape behind `TsEnvironment`. Every optional peer sits behind a lazy `import()` inside its seam, so an absent one surfaces at the call site rather than as an import-time crash of the package entry point — see [Why the optional peers are lazy](#why-the-optional-peers-are-lazy).
+
+The net is a required peer set of four — `effect`, `@effect/platform-node`, `@effected/store`, `@effected/semver` — still down from v3's seven, and zero `dependencies`. The old one-line rule ("in a signature, peer; only in a function body, dependency") is now only the second tier: `@effected/semver` satisfies it and is a peer regardless. Before moving anything across the line, check the `effect`-peer question first, then the signature question.
+
+### Why the library lives in `package/`
+
+The workspace split is a dependency-resolution constraint, not housekeeping. The `@vitest-agent/*` toolchain pins `effect` as an **exact direct dependency** at `4.0.0-beta.101`, while the library builds against `4.0.0-beta.107`. Every `@effected/*` package declares `effect` as a **peer**, and a peer resolves from the importer's scope — so while the toolchain and the library shared one resolution closure, `@effected/*` artifacts compiled against one beta were handed the other beta's core. That surfaced as `Schema.TaggedErrorClass is not a function` (or its mirror, `Schema.TaggedError is not a function`, depending on which direction the mixing went) thrown at *import* time, before any test or build could run — an error that reads like a rename bug and is not one.
+
+Moving the library into `package/` under a private workspace root puts the toolchain and the library in separate closures, so neither can be handed the other's `effect`. The consequence to live with: pnpm reports cross-closure peer warnings, and they are cosmetic. Do **not** silence them with `overrides:`, a `.pnpmfile.cjs` retarget or a `pnpm patch` shim — every one of those forces one beta's artifacts back into the other's closure and reintroduces the import-time crash. The split is the fix; the warnings are its price.
 
 ---
 
 ## Module Layout
 
+### Repository shape
+
 ```text
-src/
+/                       # private, non-published pnpm workspace root: shared toolchain only
+  package.json          # @savvy-web/silk, @vitest-agent/plugin, the repo-wide scripts
+  pnpm-workspace.yaml   # packages: [package]
+  biome.jsonc  turbo.json  tsconfig.json  vitest.config.ts  vitest.setup.ts
+  lib/configs/          # commitlint, lint-staged, markdownlint
+  package/              # the only workspace member — the published library, name unchanged
+    package.json
+    savvy.build.ts
+    src/  __test__/  docs/
+```
+
+The root publishes nothing; `package/` is what ships as `type-registry-effect`. See [Why the library lives in `package/`](#why-the-library-lives-in-package) for the constraint that forces the separation.
+
+### Source layout
+
+```text
+package/src/
   index.ts              # flat named re-exports — the entire public surface
   PackageSpec.ts        # name@version identity, cache keys, specifier normalization
   Vfs.ts                # the Vfs type, mergeVfs, prefixVfs
@@ -303,7 +293,7 @@ An empty entry set, or entry names that collide after extension normalization, a
 
 ## Error Model
 
-Every failure is a `Schema.TaggedErrorClass` with a `message` getter derived from its fields.
+Every failure is a `Schema.TaggedError` class with a `message` getter derived from its fields.
 
 | Error | Fields | Raised by |
 | --- | --- | --- |
@@ -461,7 +451,7 @@ consumers of this module already declare.
 
 ## Public API
 
-`src/index.ts` is flat named re-exports and is the authoritative list. Grouped:
+`package/src/index.ts` is flat named re-exports and is the authoritative list. Grouped:
 
 - **Identity and currency:** `PackageSpec`; `Vfs`, `VirtualFileSystem`, `mergeVfs`, `prefixVfs`
 - **Services:** `TypeRegistry` / `TypeRegistryShape`, `TypeCache` / `TypeCacheShape`, `PackageFetcher` /
@@ -487,8 +477,7 @@ const program = Effect.gen(function* () {
 
 ## Hardening
 
-Every input from the CDN — file trees, manifests, `exports` and `typesVersions` maps — is untrusted. The caps
-live in `src/internal/limits.ts` so every recursive surface imports the same constant:
+Every input from the CDN — file trees, manifests, `exports` and `typesVersions` maps — is untrusted. The caps live in `package/src/internal/limits.ts` so every recursive surface imports the same constant:
 
 - `MAX_NESTING_DEPTH` (256) — every recursive walk over untrusted collections.
 - `MAX_WILDCARDS_PER_PATTERN` (1) — npm semantics use exactly one `*`; past the bound a pattern simply does not
@@ -511,7 +500,7 @@ guards its dist-tag lookup the same way, so a `ref` of `"constructor"` cannot re
 ## Testing Strategy
 
 ```text
-__test__/
+package/__test__/
   PackageSpec.test.ts      TypeCache.test.ts      TypeRegistry.test.ts
   PackageFetcher.test.ts   TypeResolver.test.ts   VirtualPackage.test.ts
   RegistryEvent.test.ts    TsEnvironment.test.ts
@@ -524,17 +513,11 @@ throughout: `Cache.layerTest()` for the metadata plane, `TypeCache.layer({ cache
 for files, `FileSystem.layerNoop` to force IO failures into `TypeCacheError`, and `Layer.build` under
 `Effect.exit` to assert that wiring defects (relative `cacheDir`, bad namespace) die.
 
-`__test__/e2e/jsdelivr.e2e.test.ts` hits the live CDN and is self-gated behind `TS_VFS_E2E=1`, so CI never
-depends on CDN availability.
+`package/__test__/e2e/jsdelivr.e2e.test.ts` hits the live CDN and is self-gated behind `TS_VFS_E2E=1`, so CI never depends on CDN availability.
 
-The `TsEnvironment` suite needs a compiler with a JS API, which the catalog `typescript` (7.x, native tsc) is
-not. `vitest.config.ts` therefore declares `resolve.alias` mapping `typescript` to the dev-only
-`typescript-classic` alias package (`npm:typescript@^6.0.3`), so the repo builds and typechecks against the
-catalog compiler while tests exercise the classic one. This aliasing is why `TsEnvironment.make` derives its
-lib directory from the loaded module rather than trusting `require.resolve("typescript")`.
+The `TsEnvironment` suite needs a compiler with a JS API, which the catalog `typescript` (7.x, native tsc) is not. The workspace-root `vitest.config.ts` therefore declares `resolve.alias` mapping `typescript` to the dev-only `typescript-classic` alias package (`npm:typescript@^6.0.3`), so the repo builds and typechecks against the catalog compiler while tests exercise the classic one. This aliasing is why `TsEnvironment.make` derives its lib directory from the loaded module rather than trusting `require.resolve("typescript")`.
 
-Vitest runs on forks (not threads) for Effect compatibility, with coverage thresholds of 80% lines/statements,
-70% functions, 60% branches.
+Vitest is configured once at the workspace root and runs on forks (not threads) for Effect compatibility; coverage thresholds and targets come from `AgentPlugin.COVERAGE_LEVELS` — see `vitest.config.ts` for which level each uses.
 
 ---
 
@@ -556,12 +539,12 @@ Vitest runs on forks (not threads) for Effect compatibility, with coverage thres
 - **Cache:** `./cache-optimization.md` — two-plane storage, metadata keys, TTL, staleness, prune and removal
   ordering
 - **Observability:** `./observability.md` — the event channel, spans, fault tolerance
-- **Package README:** `README.md`
+- **Package README:** `package/README.md` (the repo-root `README.md` is the workspace overview)
+- **User docs:** `package/docs/`
 
 ### External References
 
-- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.99` (checkout of
-  `Effect-TS/effect`; directory name kept from the archived `effect-smol` repo)
+- Effect v4 source (vendored, read-only): `.repos/effect` @ `effect@4.0.0-beta.107` (sparse checkout of `Effect-TS/effect`)
 - Effect documentation: <https://effect.website/>
 - @typescript/vfs: <https://github.com/microsoft/TypeScript-Website/tree/v2/packages/typescript-vfs>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>

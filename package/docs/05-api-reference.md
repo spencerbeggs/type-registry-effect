@@ -190,4 +190,4 @@ The opt-in progress channel, documented in full in [observability](03-observabil
 | `BatchLoadError` | `failures` (one entry per package, with its typed error) |
 | `TsEnvironmentError` | `cause` |
 
-All are `Schema.TaggedErrorClass` classes, so `Effect.catchTag` narrows them and `cause` preserves the underlying failure structurally.
+All are `Schema.TaggedError` classes, so `Effect.catchTag` narrows them and `cause` preserves the underlying failure structurally.

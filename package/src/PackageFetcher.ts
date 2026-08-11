@@ -28,7 +28,7 @@ import { emit } from "./RegistryEvent.js";
  *
  * @public
  */
-export class FetchError extends Schema.TaggedErrorClass<FetchError>()("FetchError", {
+export class FetchError extends Schema.TaggedError<FetchError>()("FetchError", {
 	/** The request URL. */
 	url: Schema.String,
 	/** The HTTP status, when the failure has one. */
@@ -54,7 +54,7 @@ export class FetchError extends Schema.TaggedErrorClass<FetchError>()("FetchErro
  *
  * @public
  */
-export class PackageNotFoundError extends Schema.TaggedErrorClass<PackageNotFoundError>()("PackageNotFoundError", {
+export class PackageNotFoundError extends Schema.TaggedError<PackageNotFoundError>()("PackageNotFoundError", {
 	/** The package name. */
 	name: Schema.String,
 	/** The version reference that was requested. */
@@ -76,7 +76,7 @@ export class PackageNotFoundError extends Schema.TaggedErrorClass<PackageNotFoun
  *
  * @public
  */
-export class VersionNotFoundError extends Schema.TaggedErrorClass<VersionNotFoundError>()("VersionNotFoundError", {
+export class VersionNotFoundError extends Schema.TaggedError<VersionNotFoundError>()("VersionNotFoundError", {
 	/** The package name. */
 	name: Schema.String,
 	/** The requested reference: a range, dist-tag or exact version. */

@@ -40,7 +40,7 @@ const MetadataFromJson = Schema.fromJsonString(TypeCacheMetadata);
  *
  * @public
  */
-export class TypeCacheError extends Schema.TaggedErrorClass<TypeCacheError>()("TypeCacheError", {
+export class TypeCacheError extends Schema.TaggedError<TypeCacheError>()("TypeCacheError", {
 	/** The cache operation that failed. */
 	operation: Schema.Literals([
 		"exists",

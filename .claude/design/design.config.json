@@ -15,13 +15,13 @@
 	},
 	"modules": {
 		"type-registry-effect": {
-			"path": ".",
+			"path": "package",
 			"designDocsPath": ".claude/design/type-registry-effect",
 			"categories": ["architecture", "observability", "performance"],
 			"maintainer": "Spencer Beggs",
 			"userDocs": {
-				"readme": "README.md",
-				"repoDocs": "docs",
+				"readme": "package/README.md",
+				"repoDocs": "package/docs",
 				"siteDocs": null
 			}
 		}

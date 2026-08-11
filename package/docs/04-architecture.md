@@ -44,7 +44,7 @@ Holding the service and calling its methods — `const registry = yield* TypeReg
 
 ## Error model
 
-Errors are `Schema.TaggedErrorClass` classes with structured fields, and each method's error union is precise rather than a package-wide catch-all.
+Errors are `Schema.TaggedError` classes with structured fields, and each method's error union is precise rather than a package-wide catch-all.
 
 | Error | Raised by | Carries |
 | --- | --- | --- |
