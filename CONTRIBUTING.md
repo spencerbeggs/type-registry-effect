@@ -23,14 +23,19 @@ The repository vendors a read-only sparse submodule under `.repos/` pinning the 
 
 ```text
 type-registry-effect/
-├── src/                  # Flat module layout, one public concern per file
-│   └── internal/         # Non-public helpers
-├── __test__/             # One test file per src/ module
-│   └── e2e/              # Live-CDN suite, opt-in
-├── docs/                 # User-facing documentation
+├── package/              # The published npm package
+│   ├── src/              # Flat module layout, one public concern per file
+│   │   └── internal/     # Non-public helpers
+│   ├── __test__/         # One test file per src/ module
+│   │   └── e2e/          # Live-CDN suite, opt-in
+│   ├── docs/             # User-facing documentation
+│   └── savvy.build.ts    # Build entry point
 ├── lib/configs/          # Shared commitlint and lint-staged configs
-└── savvy.build.ts        # Build entry point
+└── vitest.config.ts      # Test config; discovers package/__test__
 ```
+
+The repository root is a private pnpm workspace root. It holds the shared
+toolchain and configuration only — the published package lives in `package/`.
 
 ## Scripts
 
@@ -48,13 +53,13 @@ type-registry-effect/
 Run a single test file directly through Vitest:
 
 ```bash
-pnpm vitest run __test__/TypeRegistry.test.ts
+pnpm vitest run package/__test__/TypeRegistry.test.ts
 ```
 
 The end-to-end suite hits the live jsDelivr CDN and is skipped unless you opt in, so CI never depends on CDN availability:
 
 ```bash
-TS_VFS_E2E=1 pnpm vitest run __test__/e2e/jsdelivr.e2e.test.ts
+TS_VFS_E2E=1 pnpm vitest run package/__test__/e2e/jsdelivr.e2e.test.ts
 ```
 
 ## Code conventions
@@ -62,12 +67,12 @@ TS_VFS_E2E=1 pnpm vitest run __test__/e2e/jsdelivr.e2e.test.ts
 The package is built on Effect v4 and does not accept v3 idioms.
 
 - Services are `Context.Service` classes paired with an exported `*Shape` interface, with tag IDs namespaced `type-registry-effect/Name`.
-- Errors are `Schema.TaggedErrorClass` classes carrying structured fields, with `cause` preserved rather than stringified.
+- Errors are `Schema.TaggedError` classes carrying structured fields, with `cause` preserved rather than stringified.
 - Layers are exposed as statics on the service class. Parameterized factories return a fresh layer per call, so bind the result to a const.
 - This package builds no `FileSystem`, `Path`, `HttpClient` or `Cache` layer. Composition happens at the edge, in the consumer.
 - Service methods are defined with `Effect.fn("Module.method")` so each opens a named span.
 - Throwing calls such as `JSON.parse` are wrapped with `Effect.try` for typed failures.
-- `src/index.ts` uses flat named re-exports, not namespace wrappers.
+- `package/src/index.ts` uses flat named re-exports, not namespace wrappers.
 
 ### Imports
 
@@ -90,7 +95,7 @@ Composite and incremental builds, strict mode, `exactOptionalPropertyTypes` and 
 
 Vitest with `@effect/vitest`, running on forks rather than threads for Effect compatibility. Coverage uses the v8 provider with thresholds configured in `vitest.config.ts`.
 
-Prefer swapping the metadata plane with an in-memory store layer over touching a real database file. New modules get a matching test file in `__test__/`.
+Prefer swapping the metadata plane with an in-memory store layer over touching a real database file. New modules get a matching test file in `package/__test__/`.
 
 ## Commits
 

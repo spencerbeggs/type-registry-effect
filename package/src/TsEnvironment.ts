@@ -11,7 +11,7 @@ import type { Vfs } from "./Vfs.js";
  *
  * @public
  */
-export class TsEnvironmentError extends Schema.TaggedErrorClass<TsEnvironmentError>()("TsEnvironmentError", {
+export class TsEnvironmentError extends Schema.TaggedError<TsEnvironmentError>()("TsEnvironmentError", {
 	/** The underlying failure, preserved structurally. */
 	cause: Schema.Defect(),
 }) {

@@ -3,8 +3,8 @@ status: current
 module: type-registry-effect
 category: observability
 created: 2026-01-17
-updated: 2026-07-20
-last-synced: 2026-07-20
+updated: 2026-08-11
+last-synced: 2026-08-11
 completeness: 90
 related:
   - ./architecture.md
@@ -39,15 +39,13 @@ Three independent surfaces are available, and none is coupled to another:
 3. **Typed errors** — per-failure recovery on structured fields via `catchTag` / `catchTags`
    (see `architecture.md`).
 
-Events are emitted from `src/TypeRegistry.ts`, with one exception: `FetchFailed` is emitted from
-`src/PackageFetcher.ts`, where the HTTP status is actually observed. `TypeCache` and `TypeResolver` emit
-nothing, which keeps their operations independently testable.
+Events are emitted from `package/src/TypeRegistry.ts`, with one exception: `FetchFailed` is emitted from `package/src/PackageFetcher.ts`, where the HTTP status is actually observed. `TypeCache` and `TypeResolver` emit nothing, which keeps their operations independently testable.
 
 ---
 
 ## Current State
 
-- `RegistryEvent` is a `Schema.Union` of eleven `Schema.TaggedStruct` variants (`src/RegistryEvent.ts`).
+- `RegistryEvent` is a `Schema.Union` of eleven `Schema.TaggedStruct` variants (`package/src/RegistryEvent.ts`).
 - `RegistryObserver` is a `Context.Service` with a single `emit` method, plus `layerCallback` and `layerNoop`
   statics.
 - The internal `emit` helper resolves the observer via `Effect.serviceOption` and no-ops on absence.
@@ -57,12 +55,11 @@ nothing, which keeps their operations independently testable.
 
 Changed in the v4 rewrite:
 
-- **The Effect Metrics module is gone.** `src/metrics.ts` and its counters/histograms were deleted. Everything
+- **The Effect Metrics module is gone.** The v3 `src/metrics.ts` and its counters/histograms were deleted. Everything
   a metric carried is present on the event stream as typed fields (`duration` on `PackageLoaded` and
   `BatchComplete`, `source` on `PackageLoaded`, counts on `BatchComplete`), so a host that wants metrics
   derives them in its observer against its own registry rather than accumulating in this library's.
-- **The deprecated log-annotation surface is gone.** `src/events.ts`, `LogEventSchema` and `LogEvent` are
-  deleted outright rather than kept `@deprecated`.
+- **The deprecated log-annotation surface is gone.** The v3 `src/events.ts`, `LogEventSchema` and `LogEvent` are deleted outright rather than kept `@deprecated`.
 - `RegistryEvent` moved from a `Data.TaggedEnum` to a `Schema.Union`, so there are no `$is` / `$match`
   combinators — narrow with `switch (event._tag)` or `Match`.
 - The service was renamed `TypeRegistryObserver` → `RegistryObserver`, tag id
@@ -174,8 +171,7 @@ inspect it rather than relying only on `kind`.
 
 ### Classification
 
-`classify` in `src/TypeRegistry.ts` maps a per-package failure to a stable `PackageLoadFailed.kind` (`not-found`,
-`version-range`, `schema`, `network`, `cache`, `unknown`) from **typed error tags and structured fields only**:
+`classify` in `package/src/TypeRegistry.ts` maps a per-package failure to a stable `PackageLoadFailed.kind` (`not-found`, `version-range`, `schema`, `network`, `cache`, `unknown`) from **typed error tags and structured fields only**:
 `FetchError` splits on its `status === 404` and `kind === "schema"` fields, and everything else branches on
 `_tag`. v3's `classifyLoadError` did substring matching over stringified errors; that is dead, and no event
 `kind` depends on message text. `VersionResolveFailed.kind` is derived the same way.
@@ -241,11 +237,10 @@ exporting them is the host's `Tracer` choice.
 
 - **Architecture:** `./architecture.md` — services, error model, hardening, public API
 - **Cache optimization:** `./cache-optimization.md` — two-plane storage, TTL, staleness, prune
-- **Main package README:** `README.md`
+- **Main package README:** `package/README.md`
 
 ### External resources
 
-- Effect v4 source (vendored, read-only): `.repos/effect-smol` @ `effect@4.0.0-beta.99` (checkout of
-  `Effect-TS/effect`; directory name kept from the archived `effect-smol` repo)
+- Effect v4 source (vendored, read-only): `.repos/effect` @ `effect@4.0.0-beta.107` (sparse checkout of `Effect-TS/effect`)
 - Effect documentation: <https://effect.website/>
 - jsDelivr API: <https://www.jsdelivr.com/docs/api>

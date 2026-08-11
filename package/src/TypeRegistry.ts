@@ -30,7 +30,7 @@ import { mergeVfs } from "./Vfs.js";
  *
  * @public
  */
-export class BatchLoadError extends Schema.TaggedErrorClass<BatchLoadError>()("BatchLoadError", {
+export class BatchLoadError extends Schema.TaggedError<BatchLoadError>()("BatchLoadError", {
 	/** One entry per failed package, with its typed error preserved. */
 	failures: Schema.Array(
 		Schema.Struct({

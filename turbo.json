@@ -49,6 +49,17 @@
 			"outputLogs": "full",
 			"outputs": ["dist/prod/**"]
 		},
+
+		"dev": {
+			"cache": false,
+			"dependsOn": ["build:dev"],
+			"persistent": true
+		},
+		"preview": {
+			"cache": false,
+			"dependsOn": ["build:dev"],
+			"persistent": true
+		},
 		"types:check": {
 			"cache": true,
 			"dependsOn": ["^build:dev"],
