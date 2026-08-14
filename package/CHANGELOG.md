@@ -1,5 +1,17 @@
 # type-registry-effect
 
+## 2.3.4
+
+### Dependencies
+
+* | Dependency      | Type           | Action  | From   | To     |                                                                            |
+  | --------------- | -------------- | ------- | ------ | ------ | -------------------------------------------------------------------------- |
+  | @effected/store | peerDependency | updated | ^0.2.0 | ^0.3.0 | [#111][#111] Thanks [@spencerbeggs](https://github.com/apps/spencerbeggs)! |
+
+### Patch Changes
+
+[#111]: https://github.com/spencerbeggs/type-registry-effect/pull/111
+
 ## 2.3.3
 
 ### Bug Fixes
