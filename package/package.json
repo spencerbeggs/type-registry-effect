@@ -38,7 +38,7 @@
 		"@effected/store": "^0.3.0",
 		"@effected/tsconfig-json": "^0.5.0",
 		"@effected/xdg": "^0.2.1",
-		"@savvy-web/bundler": "^2.1.10",
+		"@savvy-web/bundler": "^2.1.12",
 		"@types/node": "catalog:build",
 		"@typescript/vfs": "^1.6.4",
 		"effect": "catalog:effect",
