@@ -1,5 +1,11 @@
 # type-registry-effect
 
+> [!CAUTION]
+> **This package is deprecated and no longer maintained.**
+> All functionality has been migrated to [`@tsdoctor/registry`](https://www.npmjs.com/package/@tsdoctor/registry)
+> Source code live in the [tsdoctor monorepo](https://github.com/spencerbeggs/tsdoctor).
+> No further releases, fixes or security patches will be published here.
+
 This repository is the workspace for [`type-registry-effect`](package/), an Effect library that fetches TypeScript declaration files from npm through the jsDelivr CDN, caches them on disk and assembles them into virtual file systems for `@typescript/vfs` and Twoslash. The published package lives in `package/`; the repository root is a private pnpm workspace that holds the shared toolchain (Biome, Turbo, Vitest, the commit hooks) and the community files.
 
 ## Packages
